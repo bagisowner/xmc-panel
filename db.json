@@ -1,0 +1,165 @@
+{
+  "users": [
+    {
+      "id": "usr_1790378150951",
+      "username": "admin",
+      "passwordHash": "$2b$10$/ZWCP8cERHZC0LdukROiW.ZtQwgNMwW5MmYK6RbBLIWlWvbCIBLt.",
+      "role": "Owner",
+      "permissions": [
+        "*"
+      ],
+      "createdAt": "2026-09-25T23:15:50.951Z"
+    }
+  ],
+  "sessions": [],
+  "servers": [
+    {
+      "id": "5249517e-3027-4db3-a6a3-8e273dbead4b",
+      "name": "test",
+      "description": "No description provided.",
+      "software": "Paper",
+      "version": "1.21.1",
+      "javaVersion": "21",
+      "status": "Starting",
+      "memoryLimitGb": 15,
+      "cpuLimitCores": 6,
+      "diskLimitGb": 15,
+      "primaryPort": 25565,
+      "startupCommand": "java -Xms512M -Xmx15G -jar server.jar nogui",
+      "jvmFlags": "-XX:+UseG1GC -XX:+ParallelRefProcEnabled",
+      "variables": {
+        "acceptEula": "true",
+        "downloadUrl": "https://api.papermc.io/v2/projects/paper/versions/1.21.1/builds/120/downloads/paper-1.21.1-120.jar",
+        "buildId": "120",
+        "expectedSize": "49394394",
+        "installedAt": "2026-09-25T23:19:31.212Z",
+        "jarSize": "49394394",
+        "jarPath": "/srv/minecraft/servers/5249517e-3027-4db3-a6a3-8e273dbead4b/server.jar",
+        "installationStatus": "completed"
+      },
+      "createdAt": "2026-09-25T23:19:20.775Z",
+      "updatedAt": "2026-09-25T23:19:20.775Z",
+      "activeWorld": "world",
+      "autoRestart": "OnCrash",
+      "maintenanceMode": false
+    }
+  ],
+  "allocations": [
+    {
+      "id": "alloc_25565",
+      "ipAddress": "0.0.0.0",
+      "port": 25565,
+      "serverId": "5249517e-3027-4db3-a6a3-8e273dbead4b",
+      "label": "Minecraft Default",
+      "isPrimary": true
+    },
+    {
+      "id": "alloc_25566",
+      "ipAddress": "0.0.0.0",
+      "port": 25566,
+      "serverId": null,
+      "label": "Minecraft Default",
+      "isPrimary": false
+    },
+    {
+      "id": "alloc_25567",
+      "ipAddress": "0.0.0.0",
+      "port": 25567,
+      "serverId": null,
+      "label": "Minecraft Default",
+      "isPrimary": false
+    },
+    {
+      "id": "alloc_25575",
+      "ipAddress": "0.0.0.0",
+      "port": 25575,
+      "serverId": null,
+      "label": "RCON",
+      "isPrimary": false
+    },
+    {
+      "id": "alloc_8123",
+      "ipAddress": "0.0.0.0",
+      "port": 8123,
+      "serverId": null,
+      "label": "Dynmap",
+      "isPrimary": false
+    },
+    {
+      "id": "alloc_19132",
+      "ipAddress": "0.0.0.0",
+      "port": 19132,
+      "serverId": null,
+      "label": "Bedrock",
+      "isPrimary": false
+    }
+  ],
+  "backups": [],
+  "jobs": [
+    {
+      "id": "job_1790378360776",
+      "type": "install",
+      "status": "completed",
+      "progress": 100,
+      "serverId": "5249517e-3027-4db3-a6a3-8e273dbead4b",
+      "logs": [
+        "[Job System] Job created. Type: install",
+        "[11:19:20 PM] Initiating background process...",
+        "[11:19:20 PM] Initiating background process...",
+        "[11:19:20 PM] Creating server directory at /srv/minecraft/servers/5249517e-3027-4db3-a6a3-8e273dbead4b",
+        "[11:19:20 PM] Creating server directory at /srv/minecraft/servers/5249517e-3027-4db3-a6a3-8e273dbead4b",
+        "[11:19:20 PM] Writing default configuration files (server.properties, eula.txt)",
+        "[11:19:20 PM] Writing default configuration files (server.properties, eula.txt)",
+        "[11:19:20 PM] Resolving server binaries download URL...",
+        "[11:19:20 PM] Resolving server binaries download URL...",
+        "[11:19:20 PM] Downloading genuine Paper 1.21.1 core JAR from official repository...",
+        "[11:19:20 PM] Downloading genuine Paper 1.21.1 core JAR from official repository...",
+        "[11:19:21 PM] Retrying download via direct immutable CDN mirror...",
+        "[11:19:21 PM] Retrying download via direct immutable CDN mirror...",
+        "[11:19:31 PM] Successfully downloaded and verified Paper core JAR (47.11 MB)",
+        "[11:19:31 PM] Successfully downloaded and verified Paper core JAR (47.11 MB)",
+        "[11:19:31 PM] Initializing server folders (plugins, worlds, logs)",
+        "[11:19:31 PM] Initializing server folders (plugins, worlds, logs)",
+        "[11:19:31 PM] Verifying directories, files, and initial file integrity...",
+        "[11:19:31 PM] Verifying directories, files, and initial file integrity...",
+        "[11:19:31 PM] Minecraft Paper Server setup completed successfully.",
+        "[11:19:31 PM] Minecraft Paper Server setup completed successfully."
+      ],
+      "createdAt": "2026-09-25T23:19:20.776Z",
+      "updatedAt": "2026-09-25T23:19:31.213Z"
+    }
+  ],
+  "schedules": [],
+  "auditEvents": [
+    {
+      "id": "audit_1790378150952",
+      "userId": "usr_1790378150951",
+      "username": "admin",
+      "action": "Register Admin",
+      "details": "First administrator account created on system.",
+      "ipAddress": "127.0.0.1",
+      "createdAt": "2026-09-25T23:15:50.952Z"
+    },
+    {
+      "id": "audit_1790378360784",
+      "userId": "usr_1790378150951",
+      "username": "admin",
+      "action": "Create Server",
+      "details": "Created server \"test\" on port 25565. Job ID: job_1790378360776",
+      "serverId": "5249517e-3027-4db3-a6a3-8e273dbead4b",
+      "ipAddress": "127.0.0.1",
+      "createdAt": "2026-09-25T23:19:20.784Z"
+    },
+    {
+      "id": "audit_1790378375371",
+      "userId": "usr_1790378150951",
+      "username": "admin",
+      "action": "Server START",
+      "details": "Executed lifecycle instruction start on \"test\".",
+      "serverId": "5249517e-3027-4db3-a6a3-8e273dbead4b",
+      "ipAddress": "127.0.0.1",
+      "createdAt": "2026-09-25T23:19:35.371Z"
+    }
+  ],
+  "alerts": []
+}

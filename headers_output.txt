@@ -1,0 +1,30 @@
+[
+  {
+    "headers": {
+      "User-Agent": "MinecraftPanel/1.0 (udevi2032@gmail.com)",
+      "Accept": "application/json"
+    },
+    "status": "HTTPError",
+    "code": 403,
+    "body": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Endpoint Unsupported</title><style>@import url(https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Open+Sans:wght@400;600&display=swap);.blurb,.logo{margin-bottom:20px}.blurb,.container{padding:20px;background:#fff;box-shadow:0 4px 6px rgba(0,0,0,.1);border-radius:8px}.blurb,body{text-align:center}.blurb p,p{line-height:1.6}body{font-family:Roboto,s"
+  },
+  {
+    "headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      "Accept": "application/json"
+    },
+    "status": "HTTPError",
+    "code": 403,
+    "body": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Endpoint Unsupported</title><style>@import url(https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Open+Sans:wght@400;600&display=swap);.blurb,.logo{margin-bottom:20px}.blurb,.container{padding:20px;background:#fff;box-shadow:0 4px 6px rgba(0,0,0,.1);border-radius:8px}.blurb,body{text-align:center}.blurb p,p{line-height:1.6}body{font-family:Roboto,s"
+  },
+  {
+    "headers": {
+      "User-Agent": "PaperMC-Downloader/1.0",
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    "status": "HTTPError",
+    "code": 403,
+    "body": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Endpoint Unsupported</title><style>@import url(https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Open+Sans:wght@400;600&display=swap);.blurb,.logo{margin-bottom:20px}.blurb,.container{padding:20px;background:#fff;box-shadow:0 4px 6px rgba(0,0,0,.1);border-radius:8px}.blurb,body{text-align:center}.blurb p,p{line-height:1.6}body{font-family:Roboto,s"
+  }
+]

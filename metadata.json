@@ -1,0 +1,6 @@
+{
+  "name": "Craft Command Center",
+  "description": "A production-grade Minecraft hosting control panel with real-time console and file management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
