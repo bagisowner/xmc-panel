@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Runtime persistent storage & binary JDKs
+runtimes/
+*.jar
+*.tar.gz
+*.zip
+db.json

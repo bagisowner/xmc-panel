@@ -1,6 +1,8 @@
 import Docker from 'dockerode';
 import fs from 'fs';
 
+import path from 'path';
+
 export interface DockerNodeStats {
   version: string;
   containersCount: {
@@ -160,7 +162,7 @@ export class DockerService {
     const HostConfig: any = {
       PortBindings,
       Binds: [
-        `/srv/minecraft/servers/${options.serverId}:/server`
+        `${path.resolve(process.cwd(), 'storage', 'servers', options.serverId)}:/server`
       ],
       RestartPolicy: { Name: 'unless-stopped' },
       Memory: options.memoryLimitGb * 1024 * 1024 * 1024,

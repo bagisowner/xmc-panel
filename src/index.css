@@ -6,59 +6,182 @@
 }
 
 @layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+  *::-webkit-scrollbar {
+    display: none !important;
+    width: 0px !important;
+    height: 0px !important;
+  }
+  html {
+    scrollbar-gutter: stable;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
   body {
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #05040f;
-    color: #f4f4f6;
+    background-color: #0c081e;
+    color: #f8fafc;
     overflow-x: hidden;
+    overscroll-behavior-y: none;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+    min-height: 100vh;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  #root::-webkit-scrollbar {
+    display: none !important;
+    width: 0px !important;
+    height: 0px !important;
   }
 }
 
-/* Arix-Inspired Glass UI Layering */
+/* Hide scrollbar for clean breadcrumbs and horizontal rails across all browsers & devices */
+.scrollbar-none,
+.no-scrollbar {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow: -moz-scrollbars-none !important;
+}
+
+.scrollbar-none::-webkit-scrollbar,
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-none *::-webkit-scrollbar,
+.no-scrollbar *::-webkit-scrollbar {
+  display: none !important;
+  width: 0px !important;
+  height: 0px !important;
+  max-height: 0px !important;
+  background: transparent !important;
+  opacity: 0 !important;
+  -webkit-appearance: none !important;
+}
+
+.scrollbar-none::-webkit-scrollbar-thumb,
+.no-scrollbar::-webkit-scrollbar-thumb,
+.scrollbar-none::-webkit-scrollbar-track,
+.no-scrollbar::-webkit-scrollbar-track,
+.scrollbar-none::-webkit-scrollbar-corner,
+.no-scrollbar::-webkit-scrollbar-corner {
+  display: none !important;
+  background: transparent !important;
+  width: 0px !important;
+  height: 0px !important;
+  opacity: 0 !important;
+}
+
+/* Custom smooth thin scrollbar for scrollable panels */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(15, 10, 30, 0.4);
+  border-radius: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(168, 85, 247, 0.35);
+  border-radius: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.6);
+}
+
+/* Arix-Inspired Premium Clean UI Layering (Solid Deep Purple Sidebar, High-Contrast, Zero Blur Bleed) */
 .glass-sidebar {
-  background: rgba(10, 8, 25, 0.78);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, #1d0c3d 0%, #170933 45%, #110626 100%);
+  border-right: 1px solid rgba(168, 85, 247, 0.35);
+  box-shadow: 6px 0 32px 0 rgba(0, 0, 0, 0.5), inset -1px 0 0 0 rgba(168, 85, 247, 0.2);
 }
 
 .glass-header {
-  background: rgba(8, 6, 20, 0.80);
+  background: linear-gradient(90deg, rgba(18, 13, 42, 0.50) 0%, rgba(23, 16, 54, 0.55) 50%, rgba(18, 13, 42, 0.50) 100%);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-color: rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.15);
 }
 
 .glass-panel {
-  background: rgba(16, 12, 38, 0.72);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(145deg, #130e2c 0%, #0d0920 100%);
+  border: 1px solid rgba(168, 85, 247, 0.20);
+  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.45);
 }
 
 .glass-card {
-  background: rgba(20, 15, 45, 0.70);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(145deg, #150f32 0%, #0e0a24 100%);
+  border: 1px solid rgba(168, 85, 247, 0.18);
+  box-shadow: 0 6px 20px 0 rgba(0, 0, 0, 0.35);
+  transition: all 0.25s ease-in-out;
+}
+
+.glass-card:hover {
+  border-color: rgba(192, 132, 252, 0.45);
+  box-shadow: 0 10px 28px 0 rgba(0, 0, 0, 0.5);
 }
 
 .glass-modal {
-  background: rgba(12, 9, 30, 0.92);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-color: rgba(168, 85, 247, 0.25);
+  background: linear-gradient(160deg, #150f33 0%, #0d0822 100%);
+  border: 1px solid rgba(168, 85, 247, 0.30);
+  box-shadow: 0 20px 50px 0 rgba(0, 0, 0, 0.7);
 }
 
 .glass-input {
-  background: rgba(10, 8, 24, 0.65);
-  border-color: rgba(255, 255, 255, 0.10);
+  background: rgba(22, 16, 48, 0.60);
+  border: 1px solid rgba(168, 85, 247, 0.24);
+  color: #ffffff;
 }
 
 .glass-input:focus {
-  border-color: rgba(168, 85, 247, 0.60);
-  box-shadow: 0 0 15px rgba(168, 85, 247, 0.20);
+  border-color: rgba(192, 132, 252, 0.70);
+  background: rgba(28, 20, 60, 0.75);
 }
+
+/* Dynamic Context-Aware Global Touch & Click Selection (Non-FileManager) */
+[data-touch-active="true"],
+.global-touch-active {
+  background-color: var(--touch-highlight-bg, rgba(255, 255, 255, 0.18)) !important;
+  box-shadow: var(--touch-highlight-shadow, 0 0 14px rgba(255, 255, 255, 0.15)) !important;
+  outline: none !important;
+  filter: brightness(1.18) !important;
+  transform: scale(0.975) !important;
+  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 120ms cubic-bezier(0.16, 1, 0.3, 1), filter 150ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* Base smooth transition for interactive elements when deselected */
+:not([data-file-manager]):not(table) button,
+:not([data-file-manager]):not(table) a,
+:not([data-file-manager]):not(table) [role="button"],
+:not([data-file-manager]):not(table) .glass-card,
+:not([data-file-manager]):not(table) .cursor-pointer,
+:not([data-file-manager]):not(table) [role="tab"],
+:not([data-file-manager]):not(table) [role="menuitem"] {
+  transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1), transform 200ms cubic-bezier(0.16, 1, 0.3, 1), filter 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* For text/links/labels/headings when active */
+span[data-touch-active="true"],
+a[data-touch-active="true"],
+p[data-touch-active="true"],
+label[data-touch-active="true"],
+h1[data-touch-active="true"],
+h2[data-touch-active="true"],
+h3[data-touch-active="true"],
+h4[data-touch-active="true"] {
+  background-color: var(--touch-text-bg, rgba(255, 255, 255, 0.16)) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  border-radius: 6px !important;
+  padding-left: 5px !important;
+  padding-right: 5px !important;
+  transform: scale(0.985) !important;
+  filter: brightness(1.18) !important;
+  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 120ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
 

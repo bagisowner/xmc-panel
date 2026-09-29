@@ -1,11 +1,14 @@
+// Component: FileManager
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Folder, File, FileText, FileCode, Archive, Image, Upload, Plus,
-  Trash2, Download, Edit3, CornerUpLeft, RefreshCw, Search, Check,
-  X, AlertCircle, Copy, Move, ArrowUpDown, ChevronRight, MoreVertical,
-  CheckSquare, Square, Save, Eye, FolderPlus, FilePlus, Sparkles,
-  Sliders, Type, WrapText, CheckCircle2
+  Folder, FileText, FileCode, Archive, Image, Upload,
+  Trash2, Download, Edit3, RefreshCw, Search,
+  X, AlertCircle, ArrowUpDown, CheckSquare, Square,
+  FolderPlus, FilePlus, Sparkles, Sliders, CheckCircle2, ArrowLeft,
+  XCircle, Layers
 } from 'lucide-react';
+import { VSCodeEditorCore } from './editor/VSCodeEditorCore';
+import { sounds } from '../utils/sound';
 
 interface FileItem {
   name: string;
@@ -18,9 +21,18 @@ interface FileItem {
 interface FileManagerProps {
   serverId: string;
   token: string;
+  diskUsedFormatted?: string;
+  diskLimitGb?: number;
+  onStorageChange?: () => void;
 }
 
-export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => {
+export const FileManager: React.FC<FileManagerProps> = ({
+  serverId,
+  token,
+  diskUsedFormatted,
+  diskLimitGb,
+  onStorageChange
+}) => {
   const [currentPath, setCurrentPath] = useState<string>('');
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -28,13 +40,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [activeFocusedItem, setActiveFocusedItem] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'name' | 'size' | 'mtime'>('name');
   const [sortAsc, setSortAsc] = useState<boolean>(true);
 
   // Modals & Editors
   const [editingFile, setEditingFile] = useState<{ path: string; name: string; content: string; originalContent: string } | null>(null);
-  const [editorFontSize, setEditorFontSize] = useState<number>(13);
-  const [editorWordWrap, setEditorWordWrap] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
   // Modal dialog states
@@ -44,12 +55,82 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
   const [renamingItem, setRenamingItem] = useState<{ oldName: string; newName: string } | null>(null);
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<string | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   // Upload state
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [uploadQueue, setUploadQueue] = useState<Array<{ name: string; size: number; progress: number; status: 'pending' | 'uploading' | 'completed' | 'failed'; error?: string }>>([]);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const breadcrumbContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Touch & Long-Press gesture management (with 10px scroll cancellation)
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isLongPressTriggeredRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (breadcrumbContainerRef.current) {
+      breadcrumbContainerRef.current.scrollLeft = breadcrumbContainerRef.current.scrollWidth;
+    }
+  }, [currentPath]);
+
+  const triggerHaptic = (durationMs = 35) => {
+    try {
+      if (typeof window !== 'undefined' && 'vibrate' in navigator && navigator.vibrate) {
+        navigator.vibrate(durationMs);
+      }
+    } catch {}
+  };
+
+  const handleTouchStart = (fileName: string, e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+    isLongPressTriggeredRef.current = false;
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+
+    // Trigger long-press after 450ms
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressTriggeredRef.current = true;
+      triggerHaptic(45);
+      sounds.playClick();
+      toggleSelect(fileName);
+    }, 450);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartPosRef.current || !longPressTimerRef.current) return;
+    const touch = e.touches[0];
+    const deltaX = Math.abs(touch.clientX - touchStartPosRef.current.x);
+    const deltaY = Math.abs(touch.clientY - touchStartPosRef.current.y);
+
+    // 10px movement threshold: immediately cancels long-press for buttery-smooth scrolling
+    if (Math.hypot(deltaX, deltaY) > 10) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    touchStartPosRef.current = null;
+  };
+
+  const handleTouchCancel = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    touchStartPosRef.current = null;
+    isLongPressTriggeredRef.current = false;
+  };
 
   const fetchFiles = async (targetPath = currentPath) => {
     try {
@@ -77,18 +158,27 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
   // Navigate folder
   const navigateTo = (folderName: string) => {
+    sounds.playClick();
+    triggerHaptic(20);
+    setActiveFocusedItem(null);
     const newPath = currentPath ? `${currentPath}/${folderName}` : folderName;
     setCurrentPath(newPath);
   };
 
   const navigateUp = () => {
     if (!currentPath) return;
+    sounds.playClick();
+    triggerHaptic(20);
+    setActiveFocusedItem(null);
     const parts = currentPath.split('/').filter(Boolean);
     parts.pop();
     setCurrentPath(parts.join('/'));
   };
 
   const navigateBreadcrumb = (index: number) => {
+    sounds.playClick();
+    triggerHaptic(20);
+    setActiveFocusedItem(null);
     if (index === -1) {
       setCurrentPath('');
       return;
@@ -108,6 +198,8 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
   };
 
   const toggleSelectAll = () => {
+    sounds.playClick();
+    triggerHaptic(20);
     if (selectedFiles.size === filteredFiles.length) {
       setSelectedFiles(new Set());
     } else {
@@ -174,6 +266,8 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
     setIsUploading(false);
     fetchFiles(currentPath);
+    onStorageChange?.();
+    sounds.playSuccess();
     setSuccessMsg(`Uploaded ${fileArray.length} item(s) successfully.`);
     setTimeout(() => {
       setUploadQueue([]);
@@ -216,7 +310,9 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
       if (!res.ok) throw new Error('Failed to create directory');
       setShowNewFolderModal(false);
       setNewItemName('');
+      sounds.playSuccess();
       fetchFiles(currentPath);
+      onStorageChange?.();
     } catch (err: any) {
       setError(err.message);
     }
@@ -238,9 +334,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
       });
       if (!res.ok) throw new Error('Failed to create file');
       setShowNewFileModal(false);
+      const createdName = newItemName.trim();
       setNewItemName('');
+      sounds.playSuccess();
       fetchFiles(currentPath);
-      openEditor(newItemName.trim());
+      onStorageChange?.();
+      openEditor(createdName);
     } catch (err: any) {
       setError(err.message);
     }
@@ -248,6 +347,8 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
   // Open editor
   const openEditor = async (fileName: string) => {
+    sounds.playClick();
+    triggerHaptic(20);
     const targetRelative = currentPath ? `${currentPath}/${fileName}` : fileName;
     try {
       setLoading(true);
@@ -270,8 +371,9 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
   };
 
   // Save edited file
-  const handleSaveEdit = async () => {
-    if (!editingFile) return;
+  const handleSaveEdit = async (contentToSave?: string): Promise<boolean> => {
+    if (!editingFile) return false;
+    const textToSave = contentToSave !== undefined ? contentToSave : editingFile.content;
     try {
       setIsSaving(true);
       const res = await fetch(`/api/servers/${serverId}/files/content`, {
@@ -282,15 +384,19 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
         },
         body: JSON.stringify({
           path: editingFile.path,
-          content: editingFile.content
+          content: textToSave
         })
       });
       if (!res.ok) throw new Error('Failed to save file');
-      setEditingFile(prev => prev ? { ...prev, originalContent: prev.content } : null);
+      setEditingFile(prev => prev ? { ...prev, content: textToSave, originalContent: textToSave } : null);
+      onStorageChange?.();
+      sounds.playSuccess();
       setSuccessMsg(`File "${editingFile.name}" saved successfully.`);
       setTimeout(() => setSuccessMsg(null), 3000);
+      return true;
     } catch (err: any) {
       setError(err.message);
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -300,6 +406,8 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
   const executeDeleteItem = async (itemName: string) => {
     const targetRelative = currentPath ? `${currentPath}/${itemName}` : itemName;
     try {
+      setIsDeleting(true);
+      setError(null);
       const res = await fetch(`/api/servers/${serverId}/files/delete`, {
         method: 'POST',
         headers: {
@@ -308,19 +416,32 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
         },
         body: JSON.stringify({ path: targetRelative })
       });
-      if (!res.ok) throw new Error('Failed to delete item');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to delete item');
+      }
       setDeleteConfirmItem(null);
-      fetchFiles(currentPath);
+      sounds.playDelete();
+      triggerHaptic(50);
+      setSuccessMsg(`"${itemName}" was deleted.`);
+      setTimeout(() => setSuccessMsg(null), 3500);
+      await fetchFiles(currentPath);
+      onStorageChange?.();
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Failed to delete item');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
   // Batch delete
   const executeBatchDelete = async () => {
     if (selectedFiles.size === 0) return;
+    const count = selectedFiles.size;
     const paths = Array.from(selectedFiles).map(name => currentPath ? `${currentPath}/${name}` : name);
     try {
+      setIsDeleting(true);
+      setError(null);
       const res = await fetch(`/api/servers/${serverId}/files/batch-delete`, {
         method: 'POST',
         headers: {
@@ -329,12 +450,22 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
         },
         body: JSON.stringify({ paths })
       });
-      if (!res.ok) throw new Error('Batch delete failed');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Batch delete failed');
+      }
       setSelectedFiles(new Set());
       setBatchDeleteConfirm(false);
-      fetchFiles(currentPath);
+      sounds.playDelete();
+      triggerHaptic(60);
+      setSuccessMsg(`${count} items deleted successfully.`);
+      setTimeout(() => setSuccessMsg(null), 3500);
+      await fetchFiles(currentPath);
+      onStorageChange?.();
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Batch delete failed');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -355,7 +486,9 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
       });
       if (!res.ok) throw new Error('Failed to rename item');
       setRenamingItem(null);
+      sounds.playSuccess();
       fetchFiles(currentPath);
+      onStorageChange?.();
     } catch (err: any) {
       setError(err.message);
     }
@@ -382,7 +515,9 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
       });
       if (!res.ok) throw new Error('Failed to create archive');
       setSelectedFiles(new Set());
+      sounds.playSuccess();
       fetchFiles(currentPath);
+      onStorageChange?.();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -407,7 +542,9 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
         })
       });
       if (!res.ok) throw new Error('Failed to extract archive');
+      sounds.playSuccess();
       fetchFiles(currentPath);
+      onStorageChange?.();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -417,6 +554,8 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
   // Download item
   const handleDownload = (itemName: string) => {
+    sounds.playClick();
+    triggerHaptic(20);
     const targetRelative = currentPath ? `${currentPath}/${itemName}` : itemName;
     const url = `/api/servers/${serverId}/files/download?path=${encodeURIComponent(targetRelative)}`;
     const a = document.createElement('a');
@@ -473,10 +612,53 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
     }
   };
 
+  const isEditableFile = (file: FileItem) => {
+    return !file.isDirectory && (
+      file.type === 'properties' ||
+      file.type === 'yaml' ||
+      file.type === 'json' ||
+      file.type === 'text' ||
+      file.name.endsWith('.yml') ||
+      file.name.endsWith('.yaml') ||
+      file.name.endsWith('.json') ||
+      file.name.endsWith('.properties') ||
+      file.name.endsWith('.env') ||
+      file.name.endsWith('.cfg') ||
+      file.name.endsWith('.conf') ||
+      file.name.endsWith('.txt') ||
+      file.name.endsWith('.toml') ||
+      file.name.endsWith('.log')
+    );
+  };
+
+  // Row / Card Tap action handler (handles regular click vs multi-selection mode)
+  const handleItemTap = (file: FileItem) => {
+    if (isLongPressTriggeredRef.current) {
+      isLongPressTriggeredRef.current = false;
+      return;
+    }
+    // Set persistent active focused highlight on tapped element
+    setActiveFocusedItem(file.name);
+
+    if (selectedFiles.size > 0) {
+      sounds.playClick();
+      triggerHaptic(20);
+      toggleSelect(file.name);
+      return;
+    }
+    if (file.isDirectory) {
+      navigateTo(file.name);
+    } else if (isEditableFile(file)) {
+      openEditor(file.name);
+    } else {
+      handleDownload(file.name);
+    }
+  };
+
   return (
-    <div className="space-y-4 min-w-0 w-full max-w-full">
+    <div className="space-y-4 min-w-0 w-full max-w-full touch-manipulation select-none sm:select-auto">
       {/* Top Action Bar */}
-      <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-3">
+      <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-3 shadow-lg">
         {/* Left: Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -488,9 +670,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
           />
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              sounds.playClick();
+              triggerHaptic(20);
+              fileInputRef.current?.click();
+            }}
             disabled={isUploading}
-            className="px-3.5 sm:px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-purple-900/30 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+            className="px-3.5 sm:px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-purple-900/30 transition-all duration-150 active:scale-95 disabled:opacity-50 cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Upload</span>
@@ -498,8 +684,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
           <button
             type="button"
-            onClick={() => { setShowNewFolderModal(true); setNewItemName(''); }}
-            className="px-3 sm:px-3.5 py-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+            onClick={() => {
+              sounds.playClick();
+              triggerHaptic(20);
+              setShowNewFolderModal(true);
+              setNewItemName('');
+            }}
+            className="px-3 sm:px-3.5 py-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition-all duration-150 active:scale-95 cursor-pointer"
           >
             <FolderPlus className="w-3.5 h-3.5 text-purple-400" />
             <span>New Folder</span>
@@ -507,8 +698,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
           <button
             type="button"
-            onClick={() => { setShowNewFileModal(true); setNewItemName(''); }}
-            className="px-3 sm:px-3.5 py-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+            onClick={() => {
+              sounds.playClick();
+              triggerHaptic(20);
+              setShowNewFileModal(true);
+              setNewItemName('');
+            }}
+            className="px-3 sm:px-3.5 py-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition-all duration-150 active:scale-95 cursor-pointer"
           >
             <FilePlus className="w-3.5 h-3.5 text-indigo-400" />
             <span>New File</span>
@@ -518,8 +714,11 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
             <>
               <button
                 type="button"
-                onClick={handleZipSelected}
-                className="px-3 py-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+                onClick={() => {
+                  sounds.playClick();
+                  handleZipSelected();
+                }}
+                className="px-3 py-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition-all duration-150 active:scale-95 cursor-pointer"
               >
                 <Archive className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Zip ({selectedFiles.size})</span>
@@ -527,11 +726,26 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
               <button
                 type="button"
-                onClick={() => setBatchDeleteConfirm(true)}
-                className="px-3 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+                onClick={() => {
+                  sounds.playClick();
+                  setBatchDeleteConfirm(true);
+                }}
+                className="px-3 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 text-xs font-medium flex items-center gap-1.5 transition-all duration-150 active:scale-95 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                 <span>Delete ({selectedFiles.size})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setSelectedFiles(new Set());
+                }}
+                className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-white/10 text-xs transition cursor-pointer"
+                title="Deselect all"
+              >
+                <X className="w-3.5 h-3.5" />
               </button>
             </>
           )}
@@ -552,15 +766,61 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
           <button
             type="button"
-            onClick={() => fetchFiles(currentPath)}
+            onClick={() => {
+              sounds.playClick();
+              fetchFiles(currentPath);
+            }}
             disabled={loading}
-            className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 border border-white/10 text-xs transition cursor-pointer disabled:opacity-50"
+            className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 border border-white/10 text-xs transition-all duration-150 active:scale-95 cursor-pointer disabled:opacity-50"
             title="Refresh Directory"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
+
+      {/* Floating Selection Banner on Active Selection */}
+      {selectedFiles.size > 0 && (
+        <div className="glass-panel p-2.5 sm:p-3 rounded-xl border border-purple-500/40 bg-purple-950/40 flex items-center justify-between gap-2 text-xs shadow-xl animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2 font-mono text-purple-200 font-semibold pl-1">
+            <Layers className="w-4 h-4 text-purple-400" />
+            <span>{selectedFiles.size} item{selectedFiles.size > 1 ? 's' : ''} selected</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              className="px-2.5 py-1 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-white/10 text-zinc-300 text-[11px] font-medium transition active:scale-95 cursor-pointer"
+            >
+              {selectedFiles.size === filteredFiles.length ? 'Deselect All' : 'Select All'}
+            </button>
+            <button
+              type="button"
+              onClick={handleZipSelected}
+              className="px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium transition active:scale-95 cursor-pointer flex items-center gap-1"
+            >
+              <Archive className="w-3 h-3" />
+              <span>Zip</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBatchDeleteConfirm(true)}
+              className="px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 text-[11px] font-medium transition active:scale-95 cursor-pointer flex items-center gap-1"
+            >
+              <Trash2 className="w-3 h-3" />
+              <span>Delete</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedFiles(new Set())}
+              className="p-1 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition cursor-pointer"
+              title="Cancel Selection"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Alerts */}
       {error && (
@@ -569,7 +829,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
             <span>{error}</span>
           </div>
-          <button onClick={() => setError(null)} className="text-rose-400 hover:text-rose-200">
+          <button onClick={() => setError(null)} className="text-rose-400 hover:text-rose-200 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -581,7 +841,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{successMsg}</span>
           </div>
-          <button onClick={() => setSuccessMsg(null)} className="text-emerald-400 hover:text-emerald-200">
+          <button onClick={() => setSuccessMsg(null)} className="text-emerald-400 hover:text-emerald-200 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -606,22 +866,46 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
       )}
 
       {/* Breadcrumbs Navigation Bar */}
-      <div className="p-2.5 sm:p-3 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between text-xs font-mono overflow-x-auto scrollbar-none gap-2">
-        <div className="flex items-center gap-1 min-w-0">
+      <div className="p-2 sm:p-2.5 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between text-xs font-mono gap-2 overflow-hidden relative shadow-inner">
+        {/* Left Side: Back Button & Scrollable Breadcrumbs Path Trail */}
+        <div
+          ref={breadcrumbContainerRef}
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto scrollbar-none no-scrollbar whitespace-nowrap py-0.5 pr-1"
+        >
+          {/* Back Button on Left of /home when inside any subdirectory */}
+          {currentPath ? (
+            <button
+              type="button"
+              onClick={navigateUp}
+              title="Go back to parent directory"
+              className="px-2 py-1 rounded-lg bg-purple-950/80 hover:bg-purple-900 border border-purple-500/40 text-purple-200 hover:text-white flex items-center gap-1 transition-all duration-150 active:scale-95 cursor-pointer text-xs font-sans font-bold shrink-0 shadow-sm mr-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-purple-300" />
+              <span>Back</span>
+            </button>
+          ) : null}
+
+          {/* Root /home button */}
           <button
             onClick={() => navigateBreadcrumb(-1)}
-            className={`px-2 py-1 rounded-lg hover:bg-white/5 transition cursor-pointer shrink-0 ${!currentPath ? 'text-purple-400 font-bold' : 'text-zinc-400 hover:text-white'}`}
+            className={`px-1.5 py-0.5 rounded-md hover:bg-white/10 transition-all duration-150 active:scale-95 cursor-pointer shrink-0 ${
+              !currentPath ? 'text-purple-400 font-bold bg-purple-950/40 border border-purple-500/30' : 'text-zinc-400 hover:text-white'
+            }`}
           >
-            /root
+            /home
           </button>
+
+          {/* Subdirectory Breadcrumb Path Items */}
           {currentPath.split('/').filter(Boolean).map((segment, idx, arr) => (
             <React.Fragment key={idx}>
-              <ChevronRight className="w-3 h-3 text-zinc-600 shrink-0" />
+              <span className="text-zinc-600 select-none text-[11px] px-0.5 font-bold">/</span>
               <button
                 onClick={() => navigateBreadcrumb(idx)}
-                className={`px-2 py-1 rounded-lg hover:bg-white/5 transition cursor-pointer truncate max-w-[120px] sm:max-w-[180px] shrink-0 ${
-                  idx === arr.length - 1 ? 'text-purple-400 font-bold' : 'text-zinc-400 hover:text-white'
+                className={`px-1.5 py-0.5 rounded-md hover:bg-white/10 transition-all duration-150 active:scale-95 cursor-pointer truncate max-w-[100px] sm:max-w-[140px] shrink-0 ${
+                  idx === arr.length - 1 ? 'text-purple-300 font-bold bg-purple-950/40 border border-purple-500/30' : 'text-zinc-400 hover:text-white'
                 }`}
+                title={segment}
               >
                 {segment}
               </button>
@@ -629,13 +913,11 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
           ))}
         </div>
 
-        {currentPath && (
-          <button
-            onClick={navigateUp}
-            className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-white px-2.5 py-1 rounded-lg bg-zinc-900/60 border border-white/10 shrink-0 ml-2 cursor-pointer"
-          >
-            <CornerUpLeft className="w-3 h-3" /> Up
-          </button>
+        {/* Right Side: Disk Usage Badge (Firmly anchored with z-10 and shrink-0) */}
+        {diskUsedFormatted && (
+          <div className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-lg bg-[#0e0a22] border border-purple-500/40 text-[10px] sm:text-[11px] font-mono text-purple-300 shrink-0 whitespace-nowrap shadow-md z-10">
+            <span className="hidden xs:inline">Disk:</span> {diskUsedFormatted} / {diskLimitGb || 15} GB
+          </div>
         )}
       </div>
 
@@ -644,20 +926,23 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`glass-panel rounded-2xl border transition-all duration-200 overflow-hidden relative ${
+        className={`glass-panel rounded-2xl border transition-all duration-200 overflow-hidden relative h-auto min-h-0 flex flex-col justify-start scrollbar-none no-scrollbar ${
           isDragging ? 'border-purple-500 bg-purple-950/30' : 'border-white/5'
         }`}
       >
         {isDragging && (
-          <div className="absolute inset-0 z-30 bg-purple-950/80 backdrop-blur-sm border-2 border-dashed border-purple-400 flex flex-col items-center justify-center p-6 text-center">
+          <div className="absolute inset-0 z-30 bg-purple-950/90 border-2 border-dashed border-purple-400 flex flex-col items-center justify-center p-6 text-center">
             <Upload className="w-10 h-10 text-purple-300 animate-bounce mb-2" />
             <p className="text-base font-bold text-white">Drop files to upload instantly</p>
-            <p className="text-xs text-purple-200 mt-1">Files will be placed into /{currentPath || 'root'}</p>
+            <p className="text-xs text-purple-200 mt-1">Files will be placed into /{currentPath ? `home/${currentPath}` : 'home'}</p>
           </div>
         )}
 
         {/* DESKTOP TABLE VIEW */}
-        <div className="hidden sm:block w-full overflow-x-auto min-w-0">
+        <div 
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          className="hidden sm:block w-full overflow-x-auto min-w-0 scrollbar-none no-scrollbar"
+        >
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-white/5 bg-black/40 text-zinc-400 font-semibold select-none">
@@ -665,7 +950,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                   <button
                     type="button"
                     onClick={toggleSelectAll}
-                    className="text-zinc-400 hover:text-white cursor-pointer"
+                    className="text-zinc-400 hover:text-white cursor-pointer transition active:scale-95"
                   >
                     {selectedFiles.size === filteredFiles.length && filteredFiles.length > 0 ? (
                       <CheckSquare className="w-4 h-4 text-purple-400" />
@@ -675,8 +960,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                   </button>
                 </th>
                 <th
-                  className="p-3 cursor-pointer hover:text-white"
-                  onClick={() => { setSortBy('name'); setSortAsc(!sortAsc); }}
+                  className="p-3 cursor-pointer hover:text-white transition"
+                  onClick={() => {
+                    sounds.playClick();
+                    setSortBy('name');
+                    setSortAsc(!sortAsc);
+                  }}
                 >
                   <div className="flex items-center gap-1">
                     <span>Name</span>
@@ -684,8 +973,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                   </div>
                 </th>
                 <th
-                  className="p-3 cursor-pointer hover:text-white w-28"
-                  onClick={() => { setSortBy('size'); setSortAsc(!sortAsc); }}
+                  className="p-3 cursor-pointer hover:text-white transition w-28"
+                  onClick={() => {
+                    sounds.playClick();
+                    setSortBy('size');
+                    setSortAsc(!sortAsc);
+                  }}
                 >
                   <div className="flex items-center gap-1">
                     <span>Size</span>
@@ -693,8 +986,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                   </div>
                 </th>
                 <th
-                  className="p-3 hidden md:table-cell cursor-pointer hover:text-white w-44"
-                  onClick={() => { setSortBy('mtime'); setSortAsc(!sortAsc); }}
+                  className="p-3 hidden md:table-cell cursor-pointer hover:text-white transition w-44"
+                  onClick={() => {
+                    sounds.playClick();
+                    setSortBy('mtime');
+                    setSortAsc(!sortAsc);
+                  }}
                 >
                   <div className="flex items-center gap-1">
                     <span>Modified</span>
@@ -705,56 +1002,71 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {filteredFiles.length === 0 ? (
+              {loading ? (
+                Array.from({ length: 2 }).map((_, i) => (
+                  <tr key={i} className="animate-pulse">
+                    <td className="p-3 w-10 text-center">
+                      <div className="w-4 h-4 bg-white/10 rounded mx-auto" />
+                    </td>
+                    <td className="p-3 font-mono">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-4 h-4 bg-purple-500/20 rounded" />
+                        <div className="h-3.5 bg-white/10 rounded w-36 sm:w-48" />
+                      </div>
+                    </td>
+                    <td className="p-3 font-mono">
+                      <div className="h-3.5 bg-white/10 rounded w-14" />
+                    </td>
+                    <td className="p-3 hidden md:table-cell">
+                      <div className="h-3.5 bg-white/10 rounded w-28" />
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="h-3.5 bg-white/10 rounded w-20 ml-auto" />
+                    </td>
+                  </tr>
+                ))
+              ) : filteredFiles.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-zinc-500 text-xs">
-                    {loading ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
-                        <span>Loading files...</span>
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        <Folder className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-                        <p className="font-semibold text-zinc-400">Directory is empty</p>
-                        <p className="text-[11px] text-zinc-600">Drag files here or use the Upload button above.</p>
-                      </div>
-                    )}
+                    <div className="space-y-1">
+                      <Folder className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+                      <p className="font-semibold text-zinc-400">Directory is empty</p>
+                      <p className="text-[11px] text-zinc-600">Drag files here or use the Upload button above.</p>
+                    </div>
                   </td>
                 </tr>
               ) : (
                 filteredFiles.map((file) => {
                   const isSelected = selectedFiles.has(file.name);
+                  const isFocused = activeFocusedItem === file.name;
                   const isZip = file.name.endsWith('.zip') || file.name.endsWith('.tar.gz');
-                  const isEditable = !file.isDirectory && (
-                    file.type === 'properties' ||
-                    file.type === 'yaml' ||
-                    file.type === 'json' ||
-                    file.type === 'text' ||
-                    file.name.endsWith('.yml') ||
-                    file.name.endsWith('.yaml') ||
-                    file.name.endsWith('.json') ||
-                    file.name.endsWith('.properties') ||
-                    file.name.endsWith('.env') ||
-                    file.name.endsWith('.cfg') ||
-                    file.name.endsWith('.conf') ||
-                    file.name.endsWith('.txt') ||
-                    file.name.endsWith('.toml') ||
-                    file.name.endsWith('.log')
-                  );
+                  const isEditable = isEditableFile(file);
 
                   return (
                     <tr
                       key={file.name}
-                      className={`hover:bg-white/5 transition-colors group ${
-                        isSelected ? 'bg-purple-950/25' : ''
+                      onClick={() => handleItemTap(file)}
+                      onTouchStart={(e) => handleTouchStart(file.name, e)}
+                      onTouchMove={handleTouchMove}
+                      onTouchEnd={handleTouchEnd}
+                      onTouchCancel={handleTouchCancel}
+                      className={`transition-all duration-150 group cursor-pointer active:scale-[0.995] active:bg-purple-500/25 active:ring-1 active:ring-purple-400/40 ${
+                        isSelected
+                          ? 'bg-purple-950/50 ring-1 ring-inset ring-purple-500/60 shadow-sm'
+                          : isFocused
+                          ? 'bg-purple-500/20 ring-1 ring-inset ring-purple-400/50 shadow-sm'
+                          : 'hover:bg-white/5'
                       }`}
                     >
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
-                          onClick={() => toggleSelect(file.name)}
-                          className="text-zinc-400 hover:text-white cursor-pointer"
+                          onClick={() => {
+                            sounds.playClick();
+                            triggerHaptic(20);
+                            toggleSelect(file.name);
+                          }}
+                          className="text-zinc-400 hover:text-white cursor-pointer transition active:scale-95"
                         >
                           {isSelected ? (
                             <CheckSquare className="w-4 h-4 text-purple-400" />
@@ -767,23 +1079,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                       <td className="p-3 font-mono">
                         <div className="flex items-center gap-2.5 min-w-0">
                           {getFileIcon(file.type, file.isDirectory)}
-                          {file.isDirectory ? (
-                            <button
-                              type="button"
-                              onClick={() => navigateTo(file.name)}
-                              className="font-semibold text-purple-300 hover:text-purple-200 hover:underline truncate text-left cursor-pointer"
-                            >
-                              {file.name}
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => isEditable ? openEditor(file.name) : handleDownload(file.name)}
-                              className="text-zinc-200 hover:text-white hover:underline truncate text-left cursor-pointer"
-                            >
-                              {file.name}
-                            </button>
-                          )}
+                          <span className={`truncate text-left font-medium ${
+                            file.isDirectory
+                              ? 'text-purple-300 group-hover:text-purple-200 group-hover:underline'
+                              : 'text-zinc-200 group-hover:text-white group-hover:underline'
+                          }`}>
+                            {file.name}
+                          </span>
                         </div>
                       </td>
 
@@ -795,13 +1097,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                         {new Date(file.mtime).toLocaleDateString()} {new Date(file.mtime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </td>
 
-                      <td className="p-3 text-right">
+                      <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1">
                           {isEditable && (
                             <button
                               type="button"
                               onClick={() => openEditor(file.name)}
-                              className="p-1.5 rounded-lg hover:bg-purple-500/20 text-zinc-400 hover:text-purple-300 transition cursor-pointer"
+                              className="p-1.5 rounded-lg hover:bg-purple-500/20 text-zinc-400 hover:text-purple-300 transition-all duration-150 active:scale-90 cursor-pointer"
                               title="Edit text file"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
@@ -812,7 +1114,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                             <button
                               type="button"
                               onClick={() => handleUnzipItem(file.name)}
-                              className="p-1.5 rounded-lg hover:bg-emerald-500/20 text-zinc-400 hover:text-emerald-300 transition cursor-pointer"
+                              className="p-1.5 rounded-lg hover:bg-emerald-500/20 text-zinc-400 hover:text-emerald-300 transition-all duration-150 active:scale-90 cursor-pointer"
                               title="Extract ZIP"
                             >
                               <Archive className="w-3.5 h-3.5" />
@@ -823,7 +1125,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                             <button
                               type="button"
                               onClick={() => handleDownload(file.name)}
-                              className="p-1.5 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition cursor-pointer"
+                              className="p-1.5 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition-all duration-150 active:scale-90 cursor-pointer"
                               title="Download"
                             >
                               <Download className="w-3.5 h-3.5" />
@@ -832,8 +1134,11 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
                           <button
                             type="button"
-                            onClick={() => setRenamingItem({ oldName: file.name, newName: file.name })}
-                            className="p-1.5 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition cursor-pointer"
+                            onClick={() => {
+                              sounds.playClick();
+                              setRenamingItem({ oldName: file.name, newName: file.name });
+                            }}
+                            className="p-1.5 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition-all duration-150 active:scale-90 cursor-pointer"
                             title="Rename"
                           >
                             <Sliders className="w-3.5 h-3.5" />
@@ -841,8 +1146,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
                           <button
                             type="button"
-                            onClick={() => setDeleteConfirmItem(file.name)}
-                            className="p-1.5 rounded-lg hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 transition cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              sounds.playClick();
+                              setDeleteConfirmItem(file.name);
+                            }}
+                            className="p-1.5 rounded-lg hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 transition-all duration-150 active:scale-90 cursor-pointer"
                             title="Delete"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -857,40 +1166,66 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
           </table>
         </div>
 
-        {/* MOBILE CARD / ROW VIEW */}
-        <div className="block sm:hidden divide-y divide-white/5">
-          {filteredFiles.length === 0 ? (
+        {/* MOBILE CARD / ROW VIEW (Touch-Optimized, Long-Press & Press feedback) */}
+        <div 
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          className="block sm:hidden divide-y divide-white/5 w-full overflow-x-auto scrollbar-none no-scrollbar"
+        >
+          {loading ? (
+            Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="p-3 flex items-center justify-between gap-3 animate-pulse">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className="w-4 h-4 bg-white/10 rounded shrink-0" />
+                  <div className="w-4 h-4 bg-purple-500/20 rounded shrink-0" />
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="h-3.5 bg-white/10 rounded w-28 sm:w-36" />
+                    <div className="h-2.5 bg-white/10 rounded w-16" />
+                  </div>
+                </div>
+                <div className="w-16 h-6 bg-white/10 rounded-lg shrink-0" />
+              </div>
+            ))
+          ) : filteredFiles.length === 0 ? (
             <div className="p-8 text-center text-zinc-500 text-xs">
-              {loading ? 'Loading...' : 'Directory is empty'}
+              <div className="space-y-1">
+                <Folder className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+                <p className="font-semibold text-zinc-400">Directory is empty</p>
+                <p className="text-[11px] text-zinc-600">Drag files here or use the Upload button above.</p>
+              </div>
             </div>
           ) : (
             filteredFiles.map((file) => {
               const isSelected = selectedFiles.has(file.name);
+              const isFocused = activeFocusedItem === file.name;
               const isZip = file.name.endsWith('.zip') || file.name.endsWith('.tar.gz');
-              const isEditable = !file.isDirectory && (
-                file.type === 'properties' ||
-                file.type === 'yaml' ||
-                file.type === 'json' ||
-                file.type === 'text' ||
-                file.name.endsWith('.yml') ||
-                file.name.endsWith('.yaml') ||
-                file.name.endsWith('.json') ||
-                file.name.endsWith('.properties') ||
-                file.name.endsWith('.txt')
-              );
+              const isEditable = isEditableFile(file);
 
               return (
                 <div
                   key={file.name}
-                  className={`p-3 flex items-center justify-between gap-3 ${
-                    isSelected ? 'bg-purple-950/30' : ''
+                  onClick={() => handleItemTap(file)}
+                  onTouchStart={(e) => handleTouchStart(file.name, e)}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  onTouchCancel={handleTouchCancel}
+                  className={`p-3 flex items-center justify-between gap-3 transition-all duration-150 cursor-pointer active:scale-[0.985] active:bg-purple-500/25 active:border-l-4 active:border-purple-400 ${
+                    isSelected
+                      ? 'bg-purple-950/50 border-l-4 border-purple-500 shadow-sm ring-1 ring-purple-500/30'
+                      : isFocused
+                      ? 'bg-purple-500/20 border-l-4 border-purple-400 shadow-sm ring-1 ring-purple-400/40'
+                      : 'hover:bg-white/5'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
                     <button
                       type="button"
-                      onClick={() => toggleSelect(file.name)}
-                      className="text-zinc-400 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        sounds.playClick();
+                        triggerHaptic(20);
+                        toggleSelect(file.name);
+                      }}
+                      className="text-zinc-400 shrink-0 p-1 active:scale-90 transition"
                     >
                       {isSelected ? (
                         <CheckSquare className="w-4 h-4 text-purple-400" />
@@ -902,56 +1237,60 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
                     {getFileIcon(file.type, file.isDirectory)}
 
                     <div className="min-w-0 flex-1">
-                      {file.isDirectory ? (
-                        <button
-                          onClick={() => navigateTo(file.name)}
-                          className="text-xs font-semibold text-purple-300 truncate block text-left w-full"
-                        >
-                          {file.name}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => isEditable ? openEditor(file.name) : handleDownload(file.name)}
-                          className="text-xs text-zinc-200 truncate block text-left w-full"
-                        >
-                          {file.name}
-                        </button>
-                      )}
-                      <div className="text-[10px] text-zinc-500 font-mono">
-                        {file.isDirectory ? 'folder' : formatSize(file.size)}
+                      <div className={`text-xs font-medium truncate ${
+                        file.isDirectory ? 'text-purple-300 font-semibold' : 'text-zinc-200'
+                      }`}>
+                        {file.name}
+                      </div>
+                      <div className="text-[10px] text-zinc-500 font-mono flex items-center gap-2">
+                        <span>{file.isDirectory ? 'folder' : formatSize(file.size)}</span>
+                        <span>•</span>
+                        <span>{new Date(file.mtime).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Mobile Actions */}
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                     {isEditable && (
                       <button
+                        type="button"
                         onClick={() => openEditor(file.name)}
-                        className="p-1.5 rounded-lg bg-purple-500/10 text-purple-300"
+                        className="p-1.5 rounded-lg bg-purple-500/15 text-purple-300 active:scale-90 transition"
+                        title="Edit"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
                     )}
                     {isZip && (
                       <button
+                        type="button"
                         onClick={() => handleUnzipItem(file.name)}
-                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-300"
+                        className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 active:scale-90 transition"
+                        title="Extract"
                       >
                         <Archive className="w-3.5 h-3.5" />
                       </button>
                     )}
                     {!file.isDirectory && (
                       <button
+                        type="button"
                         onClick={() => handleDownload(file.name)}
-                        className="p-1.5 rounded-lg bg-zinc-900 text-zinc-300"
+                        className="p-1.5 rounded-lg bg-zinc-900 text-zinc-300 active:scale-90 transition"
+                        title="Download"
                       >
                         <Download className="w-3.5 h-3.5" />
                       </button>
                     )}
                     <button
-                      onClick={() => setDeleteConfirmItem(file.name)}
-                      className="p-1.5 rounded-lg bg-rose-950/40 text-rose-400"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        sounds.playClick();
+                        setDeleteConfirmItem(file.name);
+                      }}
+                      className="p-1.5 rounded-lg bg-rose-950/40 text-rose-400 hover:bg-rose-900/60 active:scale-90 transition cursor-pointer"
+                      title="Delete"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -965,106 +1304,40 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
       {/* In-Browser Full Code Editor Modal */}
       {editingFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md">
-          <div className="relative w-full max-w-5xl h-[92vh] glass-modal rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col shadow-2xl overflow-hidden border border-purple-500/30">
-            {/* Editor Header */}
-            <div className="flex flex-wrap items-center justify-between pb-3 border-b border-white/10 gap-2 shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileCode className="w-4 h-4 sm:w-5 sm:h-5 text-purple-400 shrink-0" />
-                <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[200px] sm:max-w-md">
-                  {editingFile.name}
-                </span>
-                {editingFile.content !== editingFile.originalContent && (
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
-                    Unsaved
-                  </span>
-                )}
-              </div>
-
-              {/* Editor controls */}
-              <div className="flex items-center gap-2">
-                {/* Font Size Selector */}
-                <div className="hidden sm:flex items-center gap-1 bg-black/40 border border-white/10 rounded-lg p-1 text-[11px] font-mono text-zinc-300">
-                  <Type className="w-3 h-3 text-zinc-500" />
-                  <button
-                    onClick={() => setEditorFontSize(11)}
-                    className={`px-1.5 py-0.5 rounded ${editorFontSize === 11 ? 'bg-purple-600 text-white font-bold' : 'hover:text-white'}`}
-                  >
-                    11
-                  </button>
-                  <button
-                    onClick={() => setEditorFontSize(13)}
-                    className={`px-1.5 py-0.5 rounded ${editorFontSize === 13 ? 'bg-purple-600 text-white font-bold' : 'hover:text-white'}`}
-                  >
-                    13
-                  </button>
-                  <button
-                    onClick={() => setEditorFontSize(15)}
-                    className={`px-1.5 py-0.5 rounded ${editorFontSize === 15 ? 'bg-purple-600 text-white font-bold' : 'hover:text-white'}`}
-                  >
-                    15
-                  </button>
-                </div>
-
-                {/* Wrap text toggle */}
-                <button
-                  type="button"
-                  onClick={() => setEditorWordWrap(!editorWordWrap)}
-                  className={`p-1.5 rounded-lg border text-xs transition cursor-pointer ${
-                    editorWordWrap ? 'bg-purple-600 text-white border-purple-500' : 'bg-black/40 text-zinc-400 border-white/10 hover:text-white'
-                  }`}
-                  title="Toggle Word Wrap"
-                >
-                  <WrapText className="w-3.5 h-3.5" />
-                </button>
-
-                <button
-                  onClick={handleSaveEdit}
-                  disabled={isSaving}
-                  className="px-3.5 sm:px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-md shadow-purple-900/30 transition disabled:opacity-50 cursor-pointer"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{isSaving ? 'Saving...' : 'Save'}</span>
-                </button>
-
-                <button
-                  onClick={() => setEditingFile(null)}
-                  className="p-1.5 rounded-xl hover:bg-white/10 text-zinc-400 hover:text-white cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Editor Workspace with Line Numbers */}
-            <div className="flex-1 flex overflow-hidden rounded-xl bg-black/60 border border-white/5 mt-3 font-mono">
-              {/* Line numbers gutter */}
-              <div className="py-3 px-2 text-right text-zinc-600 select-none bg-black/40 border-r border-white/5 text-xs overflow-hidden">
-                {editingFile.content.split('\n').map((_, i) => (
-                  <div key={i} style={{ fontSize: `${editorFontSize}px`, lineHeight: '1.5rem' }}>
-                    {i + 1}
-                  </div>
-                ))}
-              </div>
-
-              {/* Text Area */}
-              <textarea
-                value={editingFile.content}
-                onChange={(e) => setEditingFile({ ...editingFile, content: e.target.value })}
-                className={`flex-1 p-3 bg-transparent text-zinc-100 resize-none focus:outline-none scrollbar-thin scrollbar-thumb-zinc-800 ${
-                  editorWordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre overflow-x-auto'
-                }`}
-                style={{ fontSize: `${editorFontSize}px`, lineHeight: '1.5rem' }}
-                spellCheck={false}
-              />
-            </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85">
+          <div className="relative w-full max-w-6xl h-[92vh] glass-modal rounded-2xl sm:rounded-3xl p-3 sm:p-5 flex flex-col shadow-2xl overflow-hidden border border-purple-500/30">
+            <VSCodeEditorCore
+              title="File Editor"
+              subtitle={editingFile.path}
+              fileName={editingFile.name}
+              filePath={editingFile.path}
+              content={editingFile.content}
+              onChange={(newVal) => setEditingFile(prev => prev ? { ...prev, content: newVal } : null)}
+              onSave={handleSaveEdit}
+              onClose={() => {
+                sounds.playClick();
+                setEditingFile(null);
+              }}
+              saveState={isSaving ? 'saving' : editingFile.content === editingFile.originalContent ? 'saved' : 'unsaved'}
+              lastSavedContent={editingFile.originalContent}
+              isModal={true}
+              defaultView="visual"
+              showToast={(type, msg) => {
+                if (type === 'error') {
+                  setError(msg);
+                } else {
+                  setSuccessMsg(msg);
+                  setTimeout(() => setSuccessMsg(null), 3000);
+                }
+              }}
+            />
           </div>
         </div>
       )}
 
       {/* New Folder Modal */}
       {showNewFolderModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
           <form onSubmit={handleCreateFolder} className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <FolderPlus className="w-4 h-4 text-purple-400" /> Create Directory
@@ -1081,14 +1354,14 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
               <button
                 type="button"
                 onClick={() => setShowNewFolderModal(false)}
-                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white"
+                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!newItemName.trim()}
-                className="px-4 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl disabled:opacity-40"
+                className="px-4 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl disabled:opacity-40 transition active:scale-95 cursor-pointer"
               >
                 Create
               </button>
@@ -1099,7 +1372,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
       {/* New File Modal */}
       {showNewFileModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
           <form onSubmit={handleCreateFile} className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <FilePlus className="w-4 h-4 text-indigo-400" /> Create File
@@ -1116,14 +1389,14 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
               <button
                 type="button"
                 onClick={() => setShowNewFileModal(false)}
-                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white"
+                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!newItemName.trim()}
-                className="px-4 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl disabled:opacity-40"
+                className="px-4 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl disabled:opacity-40 transition active:scale-95 cursor-pointer"
               >
                 Create
               </button>
@@ -1134,9 +1407,11 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
       {/* Rename Modal */}
       {renamingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
           <form onSubmit={handleRename} className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl">
-            <h3 className="text-sm font-bold text-white">Rename Item</h3>
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-purple-400" /> Rename Item
+            </h3>
             <input
               type="text"
               value={renamingItem.newName}
@@ -1148,14 +1423,14 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
               <button
                 type="button"
                 onClick={() => setRenamingItem(null)}
-                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white"
+                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!renamingItem.newName.trim()}
-                className="px-4 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl disabled:opacity-40"
+                className="px-4 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl disabled:opacity-40 transition active:scale-95 cursor-pointer"
               >
                 Rename
               </button>
@@ -1166,8 +1441,14 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
       {/* Delete Item Confirmation Modal */}
       {deleteConfirmItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs"
+          onClick={() => !isDeleting && setDeleteConfirmItem(null)}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl border border-rose-500/20"
+          >
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Trash2 className="w-4 h-4 text-rose-400" /> Confirm Deletion
             </h3>
@@ -1176,16 +1457,21 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
             </p>
             <div className="flex justify-end gap-2">
               <button
+                type="button"
+                disabled={isDeleting}
                 onClick={() => setDeleteConfirmItem(null)}
-                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white"
+                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white disabled:opacity-40 transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
+                disabled={isDeleting}
                 onClick={() => executeDeleteItem(deleteConfirmItem)}
-                className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl"
+                className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl flex items-center gap-1.5 transition active:scale-95 disabled:opacity-50 shadow-lg shadow-rose-950/40 cursor-pointer"
               >
-                Delete
+                {isDeleting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>{isDeleting ? 'Deleting...' : 'Delete'}</span>
               </button>
             </div>
           </div>
@@ -1194,8 +1480,14 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
 
       {/* Batch Delete Confirmation Modal */}
       {batchDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs"
+          onClick={() => !isDeleting && setBatchDeleteConfirm(false)}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl border border-rose-500/20"
+          >
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Trash2 className="w-4 h-4 text-rose-400" /> Delete Selected Items
             </h3>
@@ -1204,16 +1496,21 @@ export const FileManager: React.FC<FileManagerProps> = ({ serverId, token }) => 
             </p>
             <div className="flex justify-end gap-2">
               <button
+                type="button"
+                disabled={isDeleting}
                 onClick={() => setBatchDeleteConfirm(false)}
-                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white"
+                className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white disabled:opacity-40 transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
+                disabled={isDeleting}
                 onClick={executeBatchDelete}
-                className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl"
+                className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl flex items-center gap-1.5 transition active:scale-95 disabled:opacity-50 shadow-lg shadow-rose-950/40 cursor-pointer"
               >
-                Delete All
+                {isDeleting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>{isDeleting ? 'Deleting...' : 'Delete All'}</span>
               </button>
             </div>
           </div>

@@ -1,3 +1,4 @@
+// Component: ThemeModal
 import React, { useRef } from 'react';
 import {
   X, Image as ImageIcon, Sparkles, Sliders, Check, Eye,
@@ -42,11 +43,8 @@ export const ThemeModal: React.FC<ThemeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fadeIn">
-      <div className="relative w-full max-w-2xl glass-modal border border-purple-500/25 rounded-3xl p-6 sm:p-7 shadow-2xl shadow-purple-950/50 text-zinc-100 max-h-[92vh] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800">
-        {/* Glow Accent */}
-        <div className="absolute -top-24 -right-24 w-56 h-56 bg-purple-600/20 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 animate-fadeIn">
+      <div className="relative w-full max-w-2xl glass-modal border border-purple-500/25 rounded-3xl p-6 sm:p-7 shadow-2xl text-zinc-100 max-h-[92vh] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800">
         {/* Header */}
         <div className="flex items-center justify-between pb-5 border-b border-zinc-800/80 mb-6">
           <div className="flex items-center gap-3">
@@ -150,7 +148,7 @@ export const ThemeModal: React.FC<ThemeModalProps> = ({
                   <div className="flex items-center gap-3">
                     <input
                       type="url"
-                      placeholder="https://example.com/minecraft-wallpaper.png"
+                      placeholder="https://rough-morning-940.linkyhost.com"
                       value={settings.customUrl.startsWith('data:') ? 'Custom uploaded image (stored locally)' : settings.customUrl}
                       onChange={(e) => onUpdate({ customUrl: e.target.value })}
                       className="flex-1 px-3.5 py-2 text-xs glass-input rounded-xl text-white placeholder-zinc-500 focus:outline-none"
@@ -165,10 +163,20 @@ export const ThemeModal: React.FC<ThemeModalProps> = ({
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-purple-300 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 rounded-xl transition-colors whitespace-nowrap"
+                      className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-purple-300 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 rounded-xl transition-colors whitespace-nowrap cursor-pointer"
                     >
                       <Upload className="w-3.5 h-3.5" />
                       <span>Upload File</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                    <span>Default 8K Theme URL</span>
+                    <button
+                      type="button"
+                      onClick={() => onUpdate({ customUrl: 'https://rough-morning-940.linkyhost.com' })}
+                      className="text-purple-400 hover:text-purple-300 underline font-mono cursor-pointer"
+                    >
+                      Restore 8K Link
                     </button>
                   </div>
                 </div>

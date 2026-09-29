@@ -1,4 +1,4 @@
-// Component: PluginManager
+// Component: ModManager
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, Download, Trash2, Check, RefreshCw,
@@ -27,7 +27,7 @@ interface ModrinthProject {
   server_side?: string;
 }
 
-interface InstalledPlugin {
+interface InstalledMod {
   filename: string;
   enabled: boolean;
   sizeBytes: number;
@@ -36,7 +36,7 @@ interface InstalledPlugin {
   cleanName: string;
 }
 
-interface PluginManagerProps {
+interface ModManagerProps {
   serverId: string;
   token: string;
   software?: string;
@@ -44,16 +44,16 @@ interface PluginManagerProps {
   isServerRunning?: boolean;
 }
 
-export const PluginManager: React.FC<PluginManagerProps> = ({
+export const ModManager: React.FC<ModManagerProps> = ({
   serverId,
   token,
-  software = 'Paper',
+  software = 'Fabric',
   mcVersion = '1.21.1',
   isServerRunning = false
 }) => {
-  const isProxy = software.toLowerCase() === 'velocity' || software.toLowerCase() === 'bungeecord';
+  const loaderName = (software || 'Fabric').toLowerCase();
 
-  // Tabs: Marketplace or Installed plugins
+  // Tabs: Marketplace or Installed mods
   const [activeTab, setActiveTab] = useState<'marketplace' | 'installed'>('marketplace');
 
   // Search & Pagination State
@@ -69,27 +69,27 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Installed State
-  const [installedPlugins, setInstalledPlugins] = useState<InstalledPlugin[]>([]);
+  const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [loadingInstalled, setLoadingInstalled] = useState<boolean>(false);
   const [installingIds, setInstallingIds] = useState<Set<string>>(new Set());
   const [installSuccessMessage, setInstallSuccessMessage] = useState<string | null>(null);
-  const [deletePluginConfirm, setDeletePluginConfirm] = useState<string | null>(null);
+  const [deleteModConfirm, setDeleteModConfirm] = useState<string | null>(null);
 
   // Direct JAR upload
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const [isUploadingPlugin, setIsUploadingPlugin] = useState(false);
+  const [isUploadingMod, setIsUploadingMod] = useState(false);
   const marketplaceTopRef = useRef<HTMLDivElement | null>(null);
 
-  // Fetch installed plugins from server disk
-  const fetchInstalledPlugins = async () => {
+  // Fetch installed mods from server disk
+  const fetchInstalledMods = async () => {
     try {
       setLoadingInstalled(true);
-      const res = await fetch(`/api/servers/${serverId}/installed-addons`, {
+      const res = await fetch(`/api/servers/${serverId}/installed-mods`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        setInstalledPlugins(data.addons || []);
+        setInstalledMods(data.mods || []);
       }
     } catch {
       // Ignore
@@ -99,7 +99,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
   };
 
   useEffect(() => {
-    fetchInstalledPlugins();
+    fetchInstalledMods();
   }, [serverId]);
 
   // Search Modrinth API via backend proxy
@@ -109,10 +109,12 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
       setError(null);
 
       const facetsArray: string[][] = [];
-      facetsArray.push(['project_type:plugin']);
+      facetsArray.push(['project_type:mod']);
       
-      // Auto filter plugin types
-      facetsArray.push(['categories:paper', 'categories:spigot', 'categories:purpur', 'categories:bukkit']);
+      // Auto filter based on current server loader
+      if (loaderName === 'fabric') facetsArray.push(['categories:fabric']);
+      else if (loaderName === 'forge') facetsArray.push(['categories:forge']);
+      else if (loaderName === 'neoforge') facetsArray.push(['categories:neoforge']);
 
       if (selectedCategory && selectedCategory !== 'all') {
         facetsArray.push([`categories:${selectedCategory}`]);
@@ -163,14 +165,14 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
   }, [searchQuery, selectedCategory, sortBy, pageSize, currentPage]);
 
   // Install Project from Modrinth
-  const handleInstallPlugin = async (project: ModrinthProject) => {
+  const handleInstallMod = async (project: ModrinthProject) => {
     try {
       setInstallingIds(prev => new Set(prev).add(project.project_id));
       setError(null);
       setInstallSuccessMessage(null);
 
-      const loadersParam = 'paper,spigot,purpur,bukkit';
-      const vRes = await fetch(`https://api.modrinth.com/v2/project/${project.project_id}/version?loaders=${encodeURIComponent(`["paper","spigot","purpur","bukkit"]`)}&game_versions=${encodeURIComponent(`["${mcVersion}"]`)}`);
+      const loadersParam = loaderName;
+      const vRes = await fetch(`https://api.modrinth.com/v2/project/${project.project_id}/version?loaders=${encodeURIComponent(`["${loadersParam}"]`)}&game_versions=${encodeURIComponent(`["${mcVersion}"]`)}`);
 
       if (!vRes.ok) {
         throw new Error('Failed to fetch compatible version metadata from Modrinth');
@@ -178,7 +180,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
 
       let versions = await vRes.json();
       if (!versions || versions.length === 0) {
-        const vResFallback = await fetch(`https://api.modrinth.com/v2/project/${project.project_id}/version?loaders=${encodeURIComponent(`["paper","spigot","purpur","bukkit"]`)}`);
+        const vResFallback = await fetch(`https://api.modrinth.com/v2/project/${project.project_id}/version?loaders=${encodeURIComponent(`["${loadersParam}"]`)}`);
         if (vResFallback.ok) {
           versions = await vResFallback.json();
         }
@@ -195,7 +197,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
         throw new Error('No downloadable JAR file found in version release');
       }
 
-      const instRes = await fetch(`/api/servers/${serverId}/plugins/install`, {
+      const instRes = await fetch(`/api/servers/${serverId}/mods/install`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -211,12 +213,12 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
       const instData = await instRes.json();
       if (!instRes.ok) throw new Error(instData.error || 'Installation failed');
 
-      let successMsg = `Installed ${project.title} (${instData.filename}) into /plugins/!`;
+      let successMsg = `Installed ${project.title} (${instData.filename}) into /mods/!`;
       if (isServerRunning) {
         successMsg += ' [Restart required to activate]';
       }
       setInstallSuccessMessage(successMsg);
-      fetchInstalledPlugins();
+      fetchInstalledMods();
     } catch (err: any) {
       setError(err.message || `Failed to install ${project.title}`);
     } finally {
@@ -228,10 +230,10 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
     }
   };
 
-  // Toggle enable/disable plugin
-  const handleTogglePlugin = async (filename: string) => {
+  // Toggle enable/disable mod
+  const handleToggleMod = async (filename: string) => {
     try {
-      const res = await fetch(`/api/servers/${serverId}/installed-addons/toggle`, {
+      const res = await fetch(`/api/servers/${serverId}/installed-mods/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -240,37 +242,37 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
         body: JSON.stringify({ filename })
       });
       if (res.ok) {
-        fetchInstalledPlugins();
+        fetchInstalledMods();
       }
     } catch {
       // Ignore
     }
   };
 
-  // Delete installed plugin
-  const executeDeletePlugin = async (filename: string) => {
+  // Delete installed mod
+  const executeDeleteMod = async (filename: string) => {
     try {
-      const res = await fetch(`/api/servers/${serverId}/plugins/${filename}`, {
+      const res = await fetch(`/api/servers/${serverId}/installed-mods/${filename}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`
         }
       });
       if (res.ok) {
-        setDeletePluginConfirm(null);
-        fetchInstalledPlugins();
+        setDeleteModConfirm(null);
+        fetchInstalledMods();
       }
     } catch {
       // Ignore
     }
   };
 
-  // Upload custom plugin .jar directly
-  const handleCustomPluginUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Upload custom mod .jar directly
+  const handleCustomModUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      setIsUploadingPlugin(true);
+      setIsUploadingMod(true);
       const reader = new FileReader();
       const base64 = await new Promise<string>((resolve, reject) => {
         reader.onload = () => resolve((reader.result as string).split(',')[1] || (reader.result as string));
@@ -284,20 +286,20 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ path: `plugins/${file.name}`, base64 })
+        body: JSON.stringify({ path: `mods/${file.name}`, base64 })
       });
 
-      if (!res.ok) throw new Error('Failed to upload plugin');
-      let successMsg = `Uploaded ${file.name} to /plugins/!`;
+      if (!res.ok) throw new Error('Failed to upload mod');
+      let successMsg = `Uploaded ${file.name} to /mods/!`;
       if (isServerRunning) {
         successMsg += ' [Restart required to activate]';
       }
       setInstallSuccessMessage(successMsg);
-      fetchInstalledPlugins();
+      fetchInstalledMods();
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setIsUploadingPlugin(false);
+      setIsUploadingMod(false);
       if (uploadInputRef.current) uploadInputRef.current.value = '';
     }
   };
@@ -305,13 +307,13 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
   // Category filters
   const categoryOptions = [
     { id: 'all', label: 'All Categories' },
-    { id: 'management', label: 'Management' },
+    { id: 'optimization', label: 'Optimization' },
     { id: 'utility', label: 'Utility' },
-    { id: 'economy', label: 'Economy' },
-    { id: 'security', label: 'Security' },
-    { id: 'chat', label: 'Chat & Social' },
-    { id: 'minigame', label: 'Minigames' },
-    { id: 'worldgen', label: 'World Generation' }
+    { id: 'technology', label: 'Technology' },
+    { id: 'magic', label: 'Magic' },
+    { id: 'adventure', label: 'Adventure' },
+    { id: 'decoration', label: 'Decoration' },
+    { id: 'worldgen', label: 'World Gen' }
   ];
 
   // Pagination calculation
@@ -377,18 +379,18 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1.5">
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 animate-pulse">
-                Plugin Manager
+                Mod Manager
               </span>
               <span className="px-2 py-0.5 rounded-full text-xs font-mono bg-zinc-800 text-purple-300 border border-purple-500/20">
-                /plugins/
+                /mods/
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
               <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" />
-              {software} Plugins
+              {software} Mods & Addons
             </h2>
             <p className="text-xs sm:text-sm text-zinc-300 max-w-2xl mt-1">
-              Browse, search, and 1-click install compatible Spigot, Paper, and Purpur plugins directly from Modrinth. Compatible with Minecraft {mcVersion}.
+              Browse, search, and 1-click install verified Fabric & Forge mods directly from Modrinth. Compatible with Minecraft {mcVersion}.
             </p>
           </div>
 
@@ -405,16 +407,16 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
               Modrinth Catalog
             </button>
             <button
-              onClick={() => { setActiveTab('installed'); fetchInstalledPlugins(); }}
+              onClick={() => { setActiveTab('installed'); fetchInstalledMods(); }}
               className={`px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'installed'
                   ? 'bg-purple-600 text-white shadow-md'
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
-              <span>Installed Plugins</span>
+              <span>Installed Mods</span>
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-zinc-800 text-purple-300 font-mono">
-                {installedPlugins.length}
+                {installedMods.length}
               </span>
             </button>
           </div>
@@ -455,7 +457,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
               <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search Modrinth for plugins (e.g. EssentialsX, LuckPerms, WorldEdit)..."
+                placeholder="Search Modrinth for mods (e.g. Sodium, Lithium, FerriteCore)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 text-xs glass-input rounded-xl text-zinc-200 placeholder-zinc-500 focus:outline-none"
@@ -510,7 +512,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
           {/* Results Summary */}
           {!loading && (
             <div className="text-xs text-zinc-400 font-mono flex items-center justify-between px-1">
-              <span>Plugins: {totalHits.toLocaleString()} available</span>
+              <span>Mods: {totalHits.toLocaleString()} available</span>
               <span>Showing {Math.min(totalHits, (currentPage - 1) * pageSize + 1)}–{Math.min(totalHits, currentPage * pageSize)} of {totalHits.toLocaleString()} results</span>
             </div>
           )}
@@ -523,7 +525,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
             <div className="grid grid-cols-2 gap-2 sm:gap-3.5 pb-2">
               {searchResults.map((item) => {
                 const isInstalling = installingIds.has(item.project_id);
-                const isInstalled = installedPlugins.some(a => a.filename.toLowerCase().includes(item.slug.toLowerCase()));
+                const isInstalled = installedMods.some(a => a.filename.toLowerCase().includes(item.slug.toLowerCase()));
                 const isFocused = focusedProjectId === item.project_id;
 
                 return (
@@ -589,7 +591,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
 
                     {/* Install Button */}
                     <button
-                      onClick={() => handleInstallPlugin(item)}
+                      onClick={() => handleInstallMod(item)}
                       disabled={isInstalling}
                       className={`w-full py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
                         isInstalled
@@ -609,7 +611,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
                         </>
                       ) : (
                         <>
-                          <Download className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                          <Download className="w-3.5 h-3.5" />
                           <span className="truncate">Install</span>
                         </>
                       )}
@@ -622,8 +624,8 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
             {searchResults.length === 0 && !loading && (
               <div className="glass-panel p-12 rounded-3xl border border-white/5 text-center space-y-2">
                 <Box className="w-10 h-10 text-zinc-600 mx-auto" />
-                <p className="text-sm font-semibold text-zinc-300">No matching plugins found on Modrinth</p>
-                <p className="text-xs text-zinc-500 font-mono">Search term: "{searchQuery}"</p>
+                <p className="text-sm font-semibold text-zinc-300">No matching mods found on Modrinth</p>
+                <p className="text-xs text-zinc-500 font-mono">Search term: "{searchQuery}" under loader {software}</p>
               </div>
             )}
           </div>
@@ -679,36 +681,36 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
         </div>
       )}
 
-      {/* VIEW 2: INSTALLED PLUGINS LIST */}
+      {/* VIEW 2: INSTALLED MODS LIST */}
       {activeTab === 'installed' && (
         <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
           <div className="p-4 border-b border-white/5 bg-black/40 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <FolderOpen className="w-4 h-4 text-purple-400" />
-              Installed Plugins on Disk ({installedPlugins.length})
+              Installed Mods on Disk ({installedMods.length})
             </h3>
             <div className="flex items-center gap-2">
               <input
                 type="file"
                 accept=".jar"
                 ref={uploadInputRef}
-                onChange={handleCustomPluginUpload}
+                onChange={handleCustomModUpload}
                 className="hidden"
               />
               <button
                 type="button"
                 onClick={() => uploadInputRef.current?.click()}
-                disabled={isUploadingPlugin}
+                disabled={isUploadingMod}
                 className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>{isUploadingPlugin ? 'Uploading...' : 'Upload Plugin .jar'}</span>
+                <span>{isUploadingMod ? 'Uploading...' : 'Upload Mod .jar'}</span>
               </button>
 
               <button
-                onClick={fetchInstalledPlugins}
+                onClick={fetchInstalledMods}
                 className="p-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs flex items-center gap-1 border border-white/10"
-                title="Rescan plugins directory"
+                title="Rescan mods directory"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loadingInstalled ? 'animate-spin' : ''}`} />
               </button>
@@ -716,12 +718,12 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
           </div>
 
           <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto">
-            {installedPlugins.length === 0 ? (
+            {installedMods.length === 0 ? (
               <div className="p-8 text-center text-zinc-500 text-xs">
-                No plugins found in /plugins/ folder on disk.
+                No mods found in /mods/ folder on disk.
               </div>
             ) : (
-              installedPlugins.map((addon) => (
+              installedMods.map((addon) => (
                 <div
                   key={addon.filename}
                   className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-white/5 transition"
@@ -752,7 +754,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
                   {/* Actions */}
                   <div className="flex items-center gap-2 shrink-0">
                     <button
-                      onClick={() => handleTogglePlugin(addon.filename)}
+                      onClick={() => handleToggleMod(addon.filename)}
                       className="px-3 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
                     >
                       {addon.enabled ? <ToggleRight className="w-4 h-4 text-emerald-400" /> : <ToggleLeft className="w-4 h-4 text-zinc-500" />}
@@ -760,9 +762,9 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
                     </button>
 
                     <button
-                      onClick={() => setDeletePluginConfirm(addon.filename)}
+                      onClick={() => setDeleteModConfirm(addon.filename)}
                       className="p-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/40 text-xs transition cursor-pointer"
-                      title="Remove plugin from disk"
+                      title="Remove mod from disk"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -774,28 +776,28 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
         </div>
       )}
 
-      {/* Delete Plugin Confirmation Modal */}
-      {deletePluginConfirm && (
+      {/* Delete Mod Confirmation Modal */}
+      {deleteModConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
           <div className="w-full max-w-sm glass-modal rounded-2xl p-5 space-y-4 shadow-2xl">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Trash2 className="w-4 h-4 text-rose-400" /> Remove Plugin File
+              <Trash2 className="w-4 h-4 text-rose-400" /> Remove Mod File
             </h3>
             <p className="text-xs text-zinc-300">
-              Are you sure you want to permanently delete the plugin file <span className="text-white font-mono font-bold">"{deletePluginConfirm}"</span>?
+              Are you sure you want to permanently delete the mod file <span className="text-white font-mono font-bold">"{deleteModConfirm}"</span>?
             </p>
             <div className="flex justify-end gap-2">
               <button
-                onClick={() => setDeletePluginConfirm(null)}
+                onClick={() => setDeleteModConfirm(null)}
                 className="px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white"
               >
                 Cancel
               </button>
               <button
-                onClick={() => executeDeletePlugin(deletePluginConfirm)}
+                onClick={() => executeDeleteMod(deleteModConfirm)}
                 className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl"
               >
-                Delete Plugin
+                Delete Mod
               </button>
             </div>
           </div>

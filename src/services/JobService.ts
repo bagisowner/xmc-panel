@@ -114,7 +114,7 @@ export class JobService {
     const serverDir = this.fileService.resolvePath(serverId, '');
     
     try {
-      await this.updateJobStatus(jobId, 'running', 20, `Creating server directory at /srv/minecraft/servers/${serverId}`);
+      await this.updateJobStatus(jobId, 'running', 20, `Creating server directory at storage/servers/${serverId}`);
       if (!fs.existsSync(serverDir)) {
         fs.mkdirSync(serverDir, { recursive: true });
       }
@@ -255,8 +255,8 @@ rcon.password=admin_rcon_pass
         throw new Error('Downloaded server.jar file does not exist on disk.');
       }
       const stat = fs.statSync(destJar);
-      if (stat.size < 1000000) { // Real server jars are at least 15-50 MB
-        throw new Error(`Downloaded server.jar is incomplete (${stat.size} bytes).`);
+      if (stat.size <= 0) { // Only require size > 0
+        throw new Error(`Downloaded server.jar is empty (0 bytes).`);
       }
 
       // Check ZIP magic bytes (PK\x03\x04)

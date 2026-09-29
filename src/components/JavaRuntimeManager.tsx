@@ -1,3 +1,4 @@
+// Component: JavaRuntimeManager
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Cpu, HardDrive, CheckCircle2, AlertCircle, Download, Trash2,
@@ -48,11 +49,13 @@ interface JavaProgressStatus {
 interface JavaRuntimeManagerProps {
   token: string;
   onRefreshHostStats?: () => void;
+  onViewServers?: () => void;
 }
 
 export const JavaRuntimeManager: React.FC<JavaRuntimeManagerProps> = ({
   token,
-  onRefreshHostStats
+  onRefreshHostStats,
+  onViewServers
 }) => {
   const [runtimes, setRuntimes] = useState<JavaRuntimeInfo[]>([]);
   const [systemJava, setSystemJava] = useState<any>(null);
@@ -60,6 +63,13 @@ export const JavaRuntimeManager: React.FC<JavaRuntimeManagerProps> = ({
   const [arch, setArch] = useState<string>('x64');
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Dependency Modal State
+  const [inUseModal, setInUseModal] = useState<{
+    version: string;
+    serverCount: number;
+    usingServers: Array<{ id: string; name: string; software: string; version: string; status: string }>;
+  } | null>(null);
   
   // Progress tracking per version
   const [installProgress, setInstallProgress] = useState<Record<string, JavaProgressStatus>>({});
@@ -209,18 +219,29 @@ export const JavaRuntimeManager: React.FC<JavaRuntimeManagerProps> = ({
   };
 
   const handleDelete = async (version: string) => {
-    if (!window.confirm(`Are you sure you want to delete OpenJDK ${version} from disk? You can reinstall it at any time.`)) {
-      return;
-    }
-
     try {
       setError(null);
+      setSuccessMessage(null);
       const res = await fetch(`/api/java/${version}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error(`Failed to remove Java ${version}`);
-      setSuccessMessage(`Java ${version} runtime removed from disk.`);
+      const data = await res.json();
+
+      if (res.status === 409 || data.inUse) {
+        setInUseModal({
+          version,
+          serverCount: data.serverCount || data.usingServers?.length || 1,
+          usingServers: data.usingServers || []
+        });
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error(data.error || `Failed to remove Java ${version}`);
+      }
+
+      setSuccessMessage(`Java ${version} runtime files permanently removed from disk.`);
       fetchRuntimes();
       if (onRefreshHostStats) onRefreshHostStats();
     } catch (err: any) {
@@ -232,7 +253,6 @@ export const JavaRuntimeManager: React.FC<JavaRuntimeManagerProps> = ({
     <div className="space-y-6">
       {/* Header Banner */}
       <div className="glass-card p-6 rounded-2xl border border-purple-500/20 bg-gradient-to-r from-purple-950/40 via-slate-900/60 to-indigo-950/40 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative z-10">
           <div>
             <div className="flex items-center gap-2 mb-1.5">
@@ -486,6 +506,73 @@ export const JavaRuntimeManager: React.FC<JavaRuntimeManagerProps> = ({
           </div>
         </div>
       </div>
+
+      {/* IN USE DEPENDENCY BLOCK MODAL */}
+      {inUseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 animate-fadeIn">
+          <div className="relative w-full max-w-md glass-modal rounded-3xl p-6 shadow-2xl border border-amber-500/30 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2 text-amber-400">
+                <AlertCircle className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Cannot Delete Java {inUseModal.version}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInUseModal(null)}
+                className="text-zinc-400 hover:text-white p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-amber-200 font-semibold">
+                Java {inUseModal.version} is currently used by {inUseModal.serverCount} server{inUseModal.serverCount > 1 ? 's' : ''}.
+              </p>
+
+              <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                {inUseModal.usingServers.map((s) => (
+                  <div key={s.id} className="p-3 bg-black/40 border border-white/10 rounded-xl text-xs flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white">{s.name}</div>
+                      <div className="text-[10px] text-zinc-400 font-mono">{s.software} v{s.version}</div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-950 text-purple-300 border border-purple-500/20">
+                      {s.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-[11px] text-zinc-400">
+                Reassign these servers to a different Java runtime before deleting this OpenJDK version to prevent broken server configurations.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setInUseModal(null)}
+                className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              {onViewServers && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInUseModal(null);
+                    onViewServers();
+                  }}
+                  className="px-5 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 rounded-xl shadow-md"
+                >
+                  View Servers
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

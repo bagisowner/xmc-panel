@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { MetricsService } from './MetricsService.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -16,18 +17,30 @@ export interface FileItem {
 
 export class FileService {
   private static instance: FileService | null = null;
-  private storageRoot = '/srv/minecraft/servers';
+  private storageRoot: string;
 
   private constructor() {
+    // Workspace persistent storage directory
+    this.storageRoot = path.resolve(process.cwd(), 'storage', 'servers');
     if (!fs.existsSync(this.storageRoot)) {
+      fs.mkdirSync(this.storageRoot, { recursive: true });
+    }
+
+    // Migrate existing server files from /srv/minecraft/servers if present
+    const oldPath = '/srv/minecraft/servers';
+    if (fs.existsSync(oldPath)) {
       try {
-        fs.mkdirSync(this.storageRoot, { recursive: true });
-      } catch (err: any) {
-        console.error(`[FileService] Failed to create /srv/minecraft/servers:`, err.message);
-        this.storageRoot = path.resolve(process.cwd(), 'storage/servers');
-        if (!fs.existsSync(this.storageRoot)) {
-          fs.mkdirSync(this.storageRoot, { recursive: true });
+        const entries = fs.readdirSync(oldPath);
+        for (const entry of entries) {
+          const oldEntry = path.join(oldPath, entry);
+          const newEntry = path.join(this.storageRoot, entry);
+          if (!fs.existsSync(newEntry)) {
+            fs.cpSync(oldEntry, newEntry, { recursive: true });
+            console.log(`[FileService] Migrated server files from ${oldEntry} to ${newEntry}`);
+          }
         }
+      } catch (err: any) {
+        console.warn('[FileService] Notice migrating server files:', err.message);
       }
     }
   }
@@ -48,7 +61,28 @@ export class FileService {
    * Throws an error if path traversal is detected.
    */
   public resolvePath(serverId: string, relativePath: string): string {
-    const serverRoot = path.resolve(this.storageRoot, serverId);
+    let serverRoot = path.resolve(this.storageRoot, serverId);
+
+    // If serverRoot doesn't exist, check if serverId matches a server name or ID in db
+    if (!fs.existsSync(serverRoot)) {
+      try {
+        const primaryDb = path.join(process.cwd(), 'db.json');
+        const storageDb = path.join(process.cwd(), 'storage', 'db.json');
+        const activeDb = fs.existsSync(primaryDb) ? primaryDb : (fs.existsSync(storageDb) ? storageDb : null);
+        if (activeDb) {
+          const dbData = JSON.parse(fs.readFileSync(activeDb, 'utf8'));
+          const match = (dbData.servers || []).find((s: any) => s.id === serverId || s.name === serverId);
+          if (match) {
+            const candidate = path.resolve(this.storageRoot, match.id);
+            if (fs.existsSync(candidate)) {
+              serverRoot = candidate;
+            }
+          }
+        }
+      } catch {
+        // Use default path
+      }
+    }
     
     // Ensure server folder itself exists
     if (!fs.existsSync(serverRoot)) {
@@ -153,6 +187,7 @@ export class FileService {
     }
 
     fs.writeFileSync(fullPath, content, 'utf8');
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
   }
 
   public saveFileBuffer(serverId: string, relativePath: string, buffer: Buffer): void {
@@ -164,6 +199,7 @@ export class FileService {
     }
 
     fs.writeFileSync(fullPath, buffer);
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
   }
 
   public createFile(serverId: string, relativePath: string): void {
@@ -180,6 +216,7 @@ export class FileService {
       throw new Error('Folder already exists');
     }
     fs.mkdirSync(fullPath, { recursive: true });
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
   }
 
   public renameFile(serverId: string, oldRelative: string, newRelative: string): void {
@@ -199,6 +236,7 @@ export class FileService {
     }
 
     fs.renameSync(oldPath, newPath);
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
   }
 
   public copyFile(serverId: string, sourceRelative: string, targetRelative: string): void {
@@ -220,6 +258,7 @@ export class FileService {
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
   }
 
   public moveFile(serverId: string, sourceRelative: string, targetRelative: string): void {
@@ -229,7 +268,7 @@ export class FileService {
   public deleteFile(serverId: string, relativePath: string): void {
     const fullPath = this.resolvePath(serverId, relativePath);
     if (!fs.existsSync(fullPath)) {
-      throw new Error('File or directory does not exist');
+      return;
     }
 
     const stat = fs.statSync(fullPath);
@@ -238,6 +277,7 @@ export class FileService {
     } else {
       fs.unlinkSync(fullPath);
     }
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
   }
 
   /**
@@ -274,6 +314,7 @@ print("ZIP_SUCCESS")
     if (!stdout.includes('ZIP_SUCCESS')) {
       throw new Error('Failed to create ZIP archive');
     }
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
     return outZipPath;
   }
 
@@ -309,6 +350,7 @@ print("UNZIP_SUCCESS")
     if (!stdout.includes('UNZIP_SUCCESS')) {
       throw new Error('Failed to extract ZIP archive');
     }
+    try { MetricsService.getInstance().invalidateDiskCache(serverId); } catch {}
   }
 
   public getFolderSize(dirPath: string): number {
