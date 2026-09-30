@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Cpu, HardDrive, CheckCircle2, AlertCircle, Download, Trash2,
-  RefreshCw, Terminal, ShieldCheck, Zap, Layers, Sparkles, ExternalLink,
+  RefreshCw, Terminal, ShieldCheck, Zap, Layers, Boxes, ExternalLink,
   Clock, Activity, ChevronRight, Check
 } from 'lucide-react';
 
@@ -355,7 +355,7 @@ export const JavaRuntimeManager: React.FC<JavaRuntimeManagerProps> = ({
                     <p className="text-xs text-purple-300/80 mt-0.5 font-medium">{rt.vendor}</p>
                   </div>
                   <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
-                    <Sparkles className="w-4 h-4" />
+                    <Boxes className="w-4 h-4" />
                   </div>
                 </div>
 

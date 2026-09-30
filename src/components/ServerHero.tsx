@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Play, Square, RotateCw, Power, Copy, Check, Server as ServerIcon,
-  HardDrive, Cpu, Activity, Users, Clock, ShieldAlert, Sparkles, Wifi, Trash2
+  HardDrive, Cpu, Activity, Users, Clock, ShieldAlert, Boxes, Wifi, Trash2, Layers
 } from 'lucide-react';
 import { RealtimeServerMetrics } from '../services/MetricsService';
 
@@ -32,9 +32,7 @@ export const UptimeTicker: React.FC<UptimeTickerProps> = ({
 
     const fetchRuntime = async () => {
       try {
-        const res = await fetch(`/api/servers/${serverId}/runtime`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
+        const res = await fetch(`/api/servers/${serverId}/runtime`);
         if (res.ok) {
           const data = await res.json();
           if (data.startedAt) {
@@ -206,28 +204,6 @@ export const ServerHero: React.FC<ServerHeroProps> = ({
                     STOPPED
                   </span>
                 )}
-
-                {/* Live Stream Pill */}
-                <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-purple-950/60 border border-purple-400/30 text-[10px] font-mono">
-                  {metricsStatus === 'live' && isRunning && (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400 animate-pulse" />
-                      <span className="text-emerald-300 font-bold">LIVE</span>
-                    </>
-                  )}
-                  {metricsStatus === 'stale' && isRunning && (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-amber-400" />
-                      <span className="text-amber-300 font-bold">STALE</span>
-                    </>
-                  )}
-                  {(!isRunning || metricsStatus === 'reconnecting') && (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-zinc-400" />
-                      <span className="text-zinc-300 font-bold">STANDBY</span>
-                    </>
-                  )}
-                </span>
               </div>
 
               {/* Subtitle with engine specs, PID, Uptime, & IP pill */}
@@ -235,8 +211,6 @@ export const ServerHero: React.FC<ServerHeroProps> = ({
                 <span className="font-bold text-purple-300">{server.software || 'Paper'}</span>
                 <span className="text-zinc-400">•</span>
                 <span className="text-zinc-200">v{server.version || '1.21.1'}</span>
-                <span className="text-zinc-400">•</span>
-                <span className="font-mono text-purple-300 font-semibold">OpenJDK {server.javaVersion || '21'}</span>
 
                 <span className="text-zinc-400">•</span>
                 <button
@@ -345,7 +319,7 @@ export const ServerHero: React.FC<ServerHeroProps> = ({
           <div>
             <div className="flex items-center justify-between text-xs text-zinc-300 mb-1.5 min-w-0 font-medium">
               <span className="flex items-center gap-1.5 font-bold text-purple-200 uppercase tracking-wider truncate">
-                <HardDrive className="w-4 h-4 text-purple-400 shrink-0" /> Memory
+                <Layers className="w-4 h-4 text-purple-400 shrink-0" /> Memory
               </span>
             </div>
             
@@ -460,7 +434,6 @@ export const ServerHero: React.FC<ServerHeroProps> = ({
               <UptimeTicker
                 serverId={server.id}
                 isRunning={isRunning}
-                token={localStorage.getItem('mc_token')}
                 initialStartedAt={server.startedAt}
                 onStartedAtLoaded={setLoadedStartedAt}
               />

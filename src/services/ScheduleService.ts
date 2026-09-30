@@ -35,7 +35,8 @@ export class ScheduleService {
   }
 
   private async checkSchedules() {
-    const schedules = this.db.getTable('schedules').filter(s => s.isActive);
+    const allSchedules = await this.db.getTable('schedules');
+    const schedules = allSchedules.filter(s => s.isActive);
     const now = new Date();
 
     for (const schedule of schedules) {
@@ -87,7 +88,8 @@ export class ScheduleService {
       const backupService = BackupService.getInstance();
       await backupService.createBackup(serverId, `Scheduled: ${schedule.name}`);
     } else if (schedule.action === 'restart') {
-      const server = this.db.getTable('servers').find(s => s.id === serverId);
+      const servers = await this.db.getTable('servers');
+      const server = servers.find(s => s.id === serverId);
       if (server) {
         // Run restart action via websocket/lifecycle trigger
         await this.db.update('servers', s => s.id === serverId, s => {

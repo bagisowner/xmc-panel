@@ -4,11 +4,12 @@ import {
   Folder, FileText, FileCode, Archive, Image, Upload,
   Trash2, Download, Edit3, RefreshCw, Search,
   X, AlertCircle, ArrowUpDown, CheckSquare, Square,
-  FolderPlus, FilePlus, Sparkles, Sliders, CheckCircle2, ArrowLeft,
+  FolderPlus, FilePlus, Boxes, Sliders, CheckCircle2, ArrowLeft,
   XCircle, Layers
 } from 'lucide-react';
 import { VSCodeEditorCore } from './editor/VSCodeEditorCore';
 import { sounds } from '../utils/sound';
+import { initGlobalTouchSystem, clearActiveTouchSelection } from '../utils/touchSystem';
 
 interface FileItem {
   name: string;
@@ -402,6 +403,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
     }
   };
 
+  // Close editor and clear all highlighted states
+  const closeEditor = () => {
+    sounds.playClick();
+    setEditingFile(null);
+    setActiveFocusedItem(null);
+    setSelectedFiles(new Set());
+    clearActiveTouchSelection();
+  };
+
   // Delete single file/folder
   const executeDeleteItem = async (itemName: string) => {
     const targetRelative = currentPath ? `${currentPath}/${itemName}` : itemName;
@@ -604,7 +614,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
       case 'archive':
         return <Archive className="w-4 h-4 text-emerald-400 shrink-0" />;
       case 'jar':
-        return <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />;
+        return <Boxes className="w-4 h-4 text-indigo-400 shrink-0" />;
       case 'image':
         return <Image className="w-4 h-4 text-pink-400 shrink-0" />;
       default:
@@ -633,10 +643,6 @@ export const FileManager: React.FC<FileManagerProps> = ({
 
   // Row / Card Tap action handler (handles regular click vs multi-selection mode)
   const handleItemTap = (file: FileItem) => {
-    if (isLongPressTriggeredRef.current) {
-      isLongPressTriggeredRef.current = false;
-      return;
-    }
     // Set persistent active focused highlight on tapped element
     setActiveFocusedItem(file.name);
 
@@ -656,7 +662,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
   };
 
   return (
-    <div className="space-y-4 min-w-0 w-full max-w-full touch-manipulation select-none sm:select-auto">
+    <div data-file-manager="true" data-component="file-manager" className="space-y-4 min-w-0 w-full max-w-full touch-manipulation select-none sm:select-auto file-manager-container">
       {/* Top Action Bar */}
       <div className="glass-panel p-3.5 sm:p-4 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-3 shadow-lg">
         {/* Left: Action Buttons */}
@@ -1046,16 +1052,12 @@ export const FileManager: React.FC<FileManagerProps> = ({
                     <tr
                       key={file.name}
                       onClick={() => handleItemTap(file)}
-                      onTouchStart={(e) => handleTouchStart(file.name, e)}
-                      onTouchMove={handleTouchMove}
-                      onTouchEnd={handleTouchEnd}
-                      onTouchCancel={handleTouchCancel}
-                      className={`transition-all duration-150 group cursor-pointer active:scale-[0.995] active:bg-purple-500/25 active:ring-1 active:ring-purple-400/40 ${
+                      className={`group cursor-pointer select-none ${
                         isSelected
-                          ? 'bg-purple-950/50 ring-1 ring-inset ring-purple-500/60 shadow-sm'
+                          ? 'bg-purple-950/50 active:bg-purple-500/40 ring-1 ring-inset ring-purple-500/60 shadow-sm'
                           : isFocused
-                          ? 'bg-purple-500/20 ring-1 ring-inset ring-purple-400/50 shadow-sm'
-                          : 'hover:bg-white/5'
+                          ? 'bg-purple-500/20 active:bg-purple-500/40 ring-1 ring-inset ring-purple-400/50 shadow-sm'
+                          : 'hover:bg-white/5 active:bg-white/10'
                       }`}
                     >
                       <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
@@ -1204,16 +1206,12 @@ export const FileManager: React.FC<FileManagerProps> = ({
                 <div
                   key={file.name}
                   onClick={() => handleItemTap(file)}
-                  onTouchStart={(e) => handleTouchStart(file.name, e)}
-                  onTouchMove={handleTouchMove}
-                  onTouchEnd={handleTouchEnd}
-                  onTouchCancel={handleTouchCancel}
-                  className={`p-3 flex items-center justify-between gap-3 transition-all duration-150 cursor-pointer active:scale-[0.985] active:bg-purple-500/25 active:border-l-4 active:border-purple-400 ${
+                  className={`p-3 flex items-center justify-between gap-3 cursor-pointer select-none ${
                     isSelected
-                      ? 'bg-purple-950/50 border-l-4 border-purple-500 shadow-sm ring-1 ring-purple-500/30'
+                      ? 'bg-purple-950/50 active:bg-purple-500/40 border-l-4 border-purple-500 shadow-sm ring-1 ring-purple-500/30'
                       : isFocused
-                      ? 'bg-purple-500/20 border-l-4 border-purple-400 shadow-sm ring-1 ring-purple-400/40'
-                      : 'hover:bg-white/5'
+                      ? 'bg-purple-500/20 active:bg-purple-500/40 border-l-4 border-purple-400 shadow-sm ring-1 ring-purple-400/40'
+                      : 'hover:bg-white/5 active:bg-white/10'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -1314,10 +1312,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
               content={editingFile.content}
               onChange={(newVal) => setEditingFile(prev => prev ? { ...prev, content: newVal } : null)}
               onSave={handleSaveEdit}
-              onClose={() => {
-                sounds.playClick();
-                setEditingFile(null);
-              }}
+              onClose={closeEditor}
               saveState={isSaving ? 'saving' : editingFile.content === editingFile.originalContent ? 'saved' : 'unsaved'}
               lastSavedContent={editingFile.originalContent}
               isModal={true}

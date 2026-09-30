@@ -6,7 +6,7 @@ import { json } from '@codemirror/lang-json';
 import { yaml } from '@codemirror/lang-yaml';
 import {
   Sliders, Save, Check, RotateCcw, Search, Plus, Trash2,
-  AlertCircle, Sparkles, Code, Download, FileText,
+  AlertCircle, Boxes, Code, Download, FileText,
   X, FileCode, ChevronDown, CheckCircle2, Swords, Globe2, Users, Cpu, Settings2
 } from 'lucide-react';
 

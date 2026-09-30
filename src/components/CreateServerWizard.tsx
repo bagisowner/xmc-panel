@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   X, Check, AlertCircle, Server, HardDrive, Cpu, Activity, Sliders, Globe,
   Terminal, Plus, ChevronLeft, ChevronRight, Clock, Settings, CheckCircle2,
-  Trash2, Play, Sparkles, RefreshCw, AlertTriangle, BookOpen, KeyRound, Shield,
+  Trash2, Play, Boxes, RefreshCw, AlertTriangle, BookOpen, KeyRound, Shield,
   MapPin, Tag, HelpCircle, Network
 } from 'lucide-react';
 import {
   MinecraftLogo, PaperLogo, PurpurLogo, FabricLogo,
   ForgeLogo, VelocityLogo, BungeeCordLogo,
-  RustLogo, PalworldLogo, ValheimLogo
+  RustLogo, PalworldLogo, ValheimLogo, SoftwareLogo
 } from './BrandLogos';
 
 interface CreateServerWizardProps {
@@ -178,11 +178,24 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
   const [deployProgress, setDeploymentProgress] = useState<any>(null);
   const [deployError, setDeployError] = useState<string | null>(null);
   const terminalBottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [step]);
 
   // Initialize candidate ID and available port allocation on open
   useEffect(() => {
     if (isOpen) {
       setStep(1);
+      setDeployError(null);
+      setDeploymentProgress(null);
+      setDeploymentServerId(null);
+      if (!serverName.trim()) {
+        setServerName('My Minecraft Server');
+      }
       const uniqueId = `srv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       setCandidateId(uniqueId);
       
@@ -200,6 +213,8 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
       fetchNodes();
       // Load versions for default engine
       fetchVersionsForEngine(selectedEngine.id);
+      // Validate initial recommended version
+      handleValidateVersionDirectly(selectedEngine.id, selectedEngine.recommendedVersion || versionInput || '1.21.1');
     }
   }, [isOpen]);
 
@@ -518,16 +533,15 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
   const canContinueStep = () => {
     if (step === 1) return selectedGame === 'minecraft';
     if (step === 2) return !!selectedEngine;
-    if (step === 3) return !isValidating && validationResult?.valid === true && validationResult?.minecraftVersion === versionInput.trim();
+    if (step === 3) return !isValidating && (validationResult ? validationResult.valid !== false : true);
     if (step === 4) {
-      // Validate RAM, CPU, Disk are chosen, and selected Java is compatible
-      const isPortTaken = servers.some(s => Number(s.primaryPort) === serverPort);
+      // Validate RAM, CPU, Disk are chosen, and selected port is valid
+      const isPortTaken = servers.some(s => Number(s.primaryPort) === serverPort && s.id !== candidateId);
       const isPortAllocated = allAllocations.some(a => Number(a.port) === serverPort && a.serverId && a.serverId !== candidateId);
-      const isJavaCompatible = customJavaVersion === (validationResult?.javaVersion || '21') || customJavaVersion === '21' || customJavaVersion === '17';
-      return ramLimitGb >= 1 && cpuCores >= 1 && diskLimitGb >= 2 && serverPort >= 1024 && serverPort <= 65535 && !isPortTaken && !isPortAllocated && isJavaCompatible;
+      return ramLimitGb >= 1 && cpuCores >= 1 && diskLimitGb >= 2 && serverPort >= 1024 && serverPort <= 65535 && !isPortTaken && !isPortAllocated;
     }
-    if (step === 5) return !!selectedNode && selectedNode.status === 'ONLINE';
-    if (step === 6) return serverName.trim().length >= 3;
+    if (step === 5) return !loadingNodes;
+    if (step === 6) return (serverName || '').trim().length >= 1;
     if (step === 7) return selectedEngine.type === 'proxy' || acceptEula;
     return true;
   };
@@ -615,15 +629,15 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
         </div>
 
         {/* RIGHT COLUMN: STEP CONTENTS */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden bg-[#0a071d]/50">
           
           {/* Header Zone */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#0a071d]/80 backdrop-blur-sm shrink-0">
             <div>
-              <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest block">
+              <span className="text-[10px] font-mono text-purple-400 uppercase tracking-widest block font-bold">
                 Provisioning Node &bull; {candidateId.substring(0, 12)}
               </span>
-              <h2 className="text-base font-black text-white tracking-tight mt-0.5">
+              <h2 className="text-sm font-black text-white tracking-tight mt-0.5">
                 {stepsList.find(s => s.id === step)?.name} Configuration
               </h2>
             </div>
@@ -638,7 +652,7 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
           </div>
 
           {/* Main content body scrollable viewport */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6">
             
             {/* STEP 1: GAME TITLE */}
             {step === 1 && (
@@ -708,7 +722,6 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {ENGINES.filter(e => e.type === 'server').map((engine) => {
-                      const EngineLogo = engine.logo;
                       return (
                         <button
                           key={engine.id}
@@ -721,9 +734,9 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
                           }`}
                         >
                           <div className="flex items-center justify-between w-full">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-xl bg-purple-950/60 border border-white/10 flex items-center justify-center p-1 shadow group-hover:scale-105 transition-transform">
-                                <EngineLogo className="w-7 h-7" />
+                            <div className="flex items-center gap-3.5">
+                              <div className="w-12 h-12 rounded-2xl bg-purple-950/60 border border-white/10 flex items-center justify-center p-1.5 shadow-md group-hover:scale-105 transition-transform shrink-0">
+                                <SoftwareLogo name={engine.name} defaultComponent={engine.logo} className="w-9 h-9" />
                               </div>
                               <div>
                                 <div className="text-xs font-bold text-white font-mono">{engine.name}</div>
@@ -755,7 +768,6 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {ENGINES.filter(e => e.type === 'proxy').map((engine) => {
-                      const EngineLogo = engine.logo;
                       return (
                         <button
                           key={engine.id}
@@ -768,9 +780,9 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
                           }`}
                         >
                           <div className="flex items-center justify-between w-full">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-xl bg-indigo-950/60 border border-white/10 flex items-center justify-center p-1 shadow group-hover:scale-105 transition-transform">
-                                <EngineLogo className="w-7 h-7" />
+                            <div className="flex items-center gap-3.5">
+                              <div className="w-12 h-12 rounded-2xl bg-indigo-950/60 border border-white/10 flex items-center justify-center p-1.5 shadow-md group-hover:scale-105 transition-transform shrink-0">
+                                <SoftwareLogo name={engine.name} defaultComponent={engine.logo} className="w-9 h-9" />
                               </div>
                               <div>
                                 <div className="text-xs font-bold text-white font-mono">{engine.name}</div>
@@ -1391,7 +1403,7 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
                       <div className="flex justify-between items-center">
                         <span className="text-zinc-500">Engine:</span>
                         <span className="text-purple-400 font-bold flex items-center gap-1.5">
-                          {React.createElement(selectedEngine.logo, { className: 'w-4 h-4' })}
+                          <SoftwareLogo name={selectedEngine.name} defaultComponent={selectedEngine.logo} className="w-4 h-4" />
                           <span>{selectedEngine.name}</span>
                         </span>
                       </div>
@@ -1494,7 +1506,7 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
               <div className="space-y-5">
                 <div className="flex items-center gap-3.5">
                   <div className="w-11 h-11 rounded-xl bg-purple-950/60 border border-purple-500/30 flex items-center justify-center p-1.5 shadow-md shrink-0">
-                    {React.createElement(selectedEngine.logo, { className: 'w-8 h-8' })}
+                    <SoftwareLogo name={selectedEngine.name} defaultComponent={selectedEngine.logo} className="w-8 h-8" />
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
@@ -1575,7 +1587,7 @@ export const CreateServerWizard: React.FC<CreateServerWizardProps> = ({
                 {/* Successful state */}
                 {deployProgress?.status === 'completed' && (
                   <div className="p-5 rounded-2xl bg-emerald-950/30 border border-emerald-500/40 flex flex-col items-center text-center space-y-2.5 animate-fadeIn">
-                    <Sparkles className="w-8 h-8 text-emerald-400 animate-pulse" />
+                    <Boxes className="w-8 h-8 text-emerald-400 animate-pulse" />
                     <div className="text-sm font-extrabold text-white font-mono">🚀 Sandboxed Minecraft Node Running!</div>
                     <p className="text-xs text-emerald-300/95 leading-relaxed font-mono">
                       Allocation complete on port :{serverPort}. Background deployment succeeded.

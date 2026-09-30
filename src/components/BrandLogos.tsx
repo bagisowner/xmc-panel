@@ -310,3 +310,36 @@ export const ValheimLogo: React.FC<{ className?: string; size?: number }> = ({ c
     <line x1="32" y1="8" x2="32" y2="56" stroke="#451a03" strokeWidth="2" />
   </svg>
 );
+
+export const SoftwareLogo: React.FC<{
+  name: string;
+  defaultComponent: React.FC<{ className?: string; size?: number }>;
+  className?: string;
+  size?: number;
+}> = ({ name, defaultComponent: DefaultComp, className, size }) => {
+  const [customUrl, setCustomUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    fetch('/api/system-settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data[name]) {
+          setCustomUrl(data[name]);
+        }
+      })
+      .catch(() => {});
+  }, [name]);
+
+  if (customUrl) {
+    return (
+      <img
+        src={customUrl}
+        className="w-full h-full object-cover rounded-lg"
+        style={size ? { width: size, height: size } : undefined}
+        alt={name}
+      />
+    );
+  }
+  return <DefaultComp className={className} size={size} />;
+};
+

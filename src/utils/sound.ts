@@ -6,20 +6,11 @@ class SoundSystem {
   public enabled = true;
 
   constructor() {
-    // Read user preference from localStorage if available
-    try {
-      const stored = localStorage.getItem('mc_audio_fx');
-      if (stored !== null) {
-        this.enabled = stored === 'true';
-      }
-    } catch {}
+    // Audio context will be initialized on first interaction
   }
 
   public setEnabled(val: boolean) {
     this.enabled = val;
-    try {
-      localStorage.setItem('mc_audio_fx', String(val));
-    } catch {}
   }
 
   private getContext(): AudioContext | null {

@@ -1,7 +1,7 @@
 // Component: ThemeModal
 import React, { useRef } from 'react';
 import {
-  X, Image as ImageIcon, Sparkles, Sliders, Check, Eye,
+  X, Image as ImageIcon, Boxes, Sliders, Check, Eye,
   Upload, RotateCcw, Monitor, Move, Minimize, Zap, EyeOff
 } from 'lucide-react';
 import { BackgroundSettings, WALLPAPER_PRESET_OPTIONS, DEFAULT_BACKGROUND_SETTINGS } from './BackgroundSystem';
@@ -134,7 +134,7 @@ export const ThemeModal: React.FC<ThemeModalProps> = ({
                   }`}
                 >
                   <div className="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center bg-zinc-900 border border-white/10 text-purple-400">
-                    <Sparkles className="w-5 h-5" />
+                    <Boxes className="w-5 h-5" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-white">Custom Upload / URL</div>
@@ -313,6 +313,38 @@ export const ThemeModal: React.FC<ThemeModalProps> = ({
                   className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 bg-zinc-800 border-zinc-700"
                 />
               </label>
+            </div>
+
+            {/* 9. Sidebar Customization */}
+            <div className="p-4 glass-panel rounded-2xl space-y-3">
+              <div>
+                <span className="text-xs font-semibold text-zinc-200">9. Sidebar Layout Style</span>
+                <p className="text-[10px] text-zinc-400 mt-0.5">Toggle between completely transparent borderless design or traditional premium glassmorphism sidebar.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => onUpdate({ sidebarStyle: 'normal' })}
+                  className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                    (settings.sidebarStyle || 'normal') === 'normal'
+                      ? 'bg-purple-600 text-white border-purple-400 shadow-md'
+                      : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                  }`}
+                >
+                  Normal Glassmorphism
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdate({ sidebarStyle: 'transparent' })}
+                  className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                    settings.sidebarStyle === 'transparent'
+                      ? 'bg-purple-600 text-white border-purple-400 shadow-md'
+                      : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                  }`}
+                >
+                  Completely Transparent
+                </button>
+              </div>
             </div>
           </div>
         )}

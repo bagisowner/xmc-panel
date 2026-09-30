@@ -66,17 +66,14 @@ export class FileService {
     // If serverRoot doesn't exist, check if serverId matches a server name or ID in db
     if (!fs.existsSync(serverRoot)) {
       try {
-        const primaryDb = path.join(process.cwd(), 'db.json');
-        const storageDb = path.join(process.cwd(), 'storage', 'db.json');
-        const activeDb = fs.existsSync(primaryDb) ? primaryDb : (fs.existsSync(storageDb) ? storageDb : null);
-        if (activeDb) {
-          const dbData = JSON.parse(fs.readFileSync(activeDb, 'utf8'));
-          const match = (dbData.servers || []).find((s: any) => s.id === serverId || s.name === serverId);
-          if (match) {
-            const candidate = path.resolve(this.storageRoot, match.id);
-            if (fs.existsSync(candidate)) {
-              serverRoot = candidate;
-            }
+        const { Database } = require('../db/Database.js');
+        const db = Database.getInstance();
+        const servers = db.getTable('servers') || [];
+        const match = servers.find((s: any) => s.id === serverId || s.name === serverId);
+        if (match) {
+          const candidate = path.resolve(this.storageRoot, match.id);
+          if (fs.existsSync(candidate)) {
+            serverRoot = candidate;
           }
         }
       } catch {

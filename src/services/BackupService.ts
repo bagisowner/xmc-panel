@@ -85,7 +85,8 @@ export class BackupService {
   }
 
   public async restoreBackup(serverId: string, backupId: string): Promise<void> {
-    const backup = this.db.getTable('backups').find(b => b.id === backupId && b.serverId === serverId);
+    const backups = await this.db.getTable('backups');
+    const backup = backups.find(b => b.id === backupId && b.serverId === serverId);
     if (!backup) {
       throw new Error('Backup not found');
     }
@@ -130,7 +131,8 @@ export class BackupService {
   }
 
   public async deleteBackup(serverId: string, backupId: string): Promise<void> {
-    const backup = this.db.getTable('backups').find(b => b.id === backupId && b.serverId === serverId);
+    const backups = await this.db.getTable('backups');
+    const backup = backups.find(b => b.id === backupId && b.serverId === serverId);
     if (!backup) {
       throw new Error('Backup not found');
     }

@@ -13,6 +13,7 @@ export interface BackgroundSettings {
   position: 'center' | 'top' | 'bottom' | 'left' | 'right';
   size: 'cover' | 'contain' | '100% 100%' | '115%';
   reduceMotion: boolean;
+  sidebarStyle?: 'transparent' | 'normal';
 }
 
 export const DEFAULT_BACKGROUND_SETTINGS: BackgroundSettings = {
@@ -26,7 +27,8 @@ export const DEFAULT_BACKGROUND_SETTINGS: BackgroundSettings = {
   particles: false,
   position: 'center',
   size: 'cover',
-  reduceMotion: false
+  reduceMotion: false,
+  sidebarStyle: 'normal'
 };
 
 // High-fidelity premium host-panel diagonal flowing ribbon metadata
@@ -149,7 +151,7 @@ export const BackgroundSystem: React.FC<BackgroundSystemProps> = ({ settings }) 
           />
         </div>
       ) : (
-        /* Render Custom Image Wallpaper if selected */
+        /* Render Custom Image or Web Wallpaper if selected */
         <div
           className="app-background fixed inset-0 w-full h-full -z-40 overflow-hidden pointer-events-none select-none"
           style={{
@@ -160,17 +162,35 @@ export const BackgroundSystem: React.FC<BackgroundSystemProps> = ({ settings }) 
           }}
         >
           {settings.customUrl && (
-            <img
-              src={settings.customUrl}
-              alt="Custom Atmospheric Background"
-              className="w-full h-full object-cover"
-              style={{
-                objectPosition: settings.position || 'center'
-              }}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
+            settings.customUrl.startsWith('data:') || settings.customUrl.match(/\.(png|jpg|jpeg|webp|gif|svg)$/i) ? (
+              <img
+                src={settings.customUrl}
+                alt="Custom Atmospheric Background"
+                className="w-full h-full object-cover"
+                style={{
+                  objectPosition: settings.position || 'center',
+                  filter: settings.blur ? `blur(${settings.blur}px)` : 'none',
+                  transform: settings.blur ? 'scale(1.05)' : 'none',
+                  transition: 'filter 0.3s ease, transform 0.3s ease'
+                }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              <iframe
+                src={settings.customUrl}
+                title="Custom Background Stream"
+                className="w-full h-full border-none pointer-events-none"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  transform: settings.blur ? 'scale(1.07)' : 'scale(1.02)',
+                  filter: settings.blur ? `blur(${settings.blur}px)` : 'none',
+                  transition: 'filter 0.3s ease, transform 0.3s ease'
+                }}
+              />
+            )
           )}
         </div>
       )}

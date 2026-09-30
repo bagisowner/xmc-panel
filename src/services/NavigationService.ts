@@ -53,21 +53,32 @@ const SERVER_TAB_CANONICAL: Record<string, string> = {
   'nginx': 'network'
 };
 
+export function getRouteKey(route: RouteState): string {
+  if (route.isLogin) return 'route:login';
+  if (route.serverId) {
+    return `route:server:${route.serverId}:${route.serverTab}`;
+  }
+  return `route:tab:${route.tab}`;
+}
+
 let intendedRouteAfterLogin: RouteState | null = null;
 
 export class NavigationService {
   private static instance: NavigationService;
   private listeners: Set<(route: RouteState) => void> = new Set();
   private currentRoute: RouteState;
+  private scrollMemory: Map<string, number> = new Map();
 
   private constructor() {
     this.currentRoute = this.parseUrl();
 
     if (typeof window !== 'undefined') {
       window.addEventListener('popstate', () => {
+        this.saveCurrentScroll();
         const route = this.parseUrl();
         this.currentRoute = route;
         this.notifyListeners(route);
+        this.restoreScrollForRoute(route, true);
       });
     }
   }
@@ -77,6 +88,34 @@ export class NavigationService {
       NavigationService.instance = new NavigationService();
     }
     return NavigationService.instance;
+  }
+
+  private saveCurrentScroll() {
+    if (typeof window !== 'undefined') {
+      const currentKey = getRouteKey(this.currentRoute);
+      const currentY = window.scrollY || document.documentElement.scrollTop || 0;
+      this.scrollMemory.set(currentKey, currentY);
+    }
+  }
+
+  private restoreScrollForRoute(route: RouteState, isPopState = false) {
+    if (typeof window === 'undefined') return;
+
+    const targetKey = getRouteKey(route);
+    // If popstate or visited route, restore saved position; otherwise default to top (0)
+    const targetY = isPopState
+      ? (this.scrollMemory.get(targetKey) || 0)
+      : (this.scrollMemory.get(targetKey) ?? 0);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.scrollTo({
+          top: targetY,
+          left: 0,
+          behavior: 'instant' as ScrollBehavior
+        });
+      });
+    });
   }
 
   // Parse current URL query string into RouteState
@@ -141,6 +180,8 @@ export class NavigationService {
 
   // Update browser URL & state without full page reload
   public navigate(nextRoute: Partial<RouteState>, replace = false) {
+    this.saveCurrentScroll();
+
     const fullRoute: RouteState = {
       tab: nextRoute.tab ?? this.currentRoute.tab,
       serverId: nextRoute.serverId !== undefined ? nextRoute.serverId : this.currentRoute.serverId,
@@ -160,6 +201,7 @@ export class NavigationService {
     }
 
     this.notifyListeners(fullRoute);
+    this.restoreScrollForRoute(fullRoute, false);
   }
 
   public navigateToTab(tab: string, replace = false) {

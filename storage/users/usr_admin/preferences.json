@@ -1,0 +1,11 @@
+{
+  "userId": "usr_admin",
+  "theme": {
+    "preset": "deep_nether",
+    "blurIntensity": "high"
+  },
+  "sidebarCollapsed": true,
+  "audioFx": false,
+  "customPreferences": {},
+  "updatedAt": "2026-09-30T02:23:32.312Z"
+}

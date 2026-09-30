@@ -28,7 +28,8 @@
     background-color: #0c081e;
     color: #f8fafc;
     overflow-x: hidden;
-    overscroll-behavior-y: none;
+    overscroll-behavior: contain !important;
+    overscroll-behavior-y: contain !important;
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
     min-height: 100vh;
@@ -40,6 +41,28 @@
     width: 0px !important;
     height: 0px !important;
   }
+}
+
+/* Isolated Independent Scroll Containers (Prevents Scroll Bleed & Scroll Chaining across elements) */
+html,
+body,
+.scroll-contain,
+.overscroll-contain,
+[data-file-manager],
+.file-manager-container,
+.glass-modal,
+.glass-panel,
+.console-viewport,
+.vscode-editor-container,
+.monaco-scrollable-element,
+aside,
+main,
+div[class*="overflow-y-auto"],
+div[class*="overflow-x-auto"],
+div[class*="overflow-auto"] {
+  overscroll-behavior: contain !important;
+  overscroll-behavior-y: contain !important;
+  overscroll-behavior-x: contain !important;
 }
 
 /* Hide scrollbar for clean breadcrumbs and horizontal rails across all browsers & devices */
@@ -100,6 +123,14 @@
   box-shadow: 6px 0 32px 0 rgba(0, 0, 0, 0.5), inset -1px 0 0 0 rgba(168, 85, 247, 0.2);
 }
 
+.glass-sidebar-transparent {
+  background: rgba(13, 9, 32, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-right: 1px solid rgba(168, 85, 247, 0.15);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+}
+
 .glass-header {
   background: linear-gradient(90deg, rgba(18, 13, 42, 0.50) 0%, rgba(23, 16, 54, 0.55) 50%, rgba(18, 13, 42, 0.50) 100%);
   backdrop-filter: blur(16px);
@@ -142,46 +173,136 @@
   background: rgba(28, 20, 60, 0.75);
 }
 
-/* Dynamic Context-Aware Global Touch & Click Selection (Non-FileManager) */
-[data-touch-active="true"],
-.global-touch-active {
-  background-color: var(--touch-highlight-bg, rgba(255, 255, 255, 0.18)) !important;
-  box-shadow: var(--touch-highlight-shadow, 0 0 14px rgba(255, 255, 255, 0.15)) !important;
-  outline: none !important;
-  filter: brightness(1.18) !important;
-  transform: scale(0.975) !important;
-  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 120ms cubic-bezier(0.16, 1, 0.3, 1), filter 150ms cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
+/* Professional Animated Touch & Click Feedback (Non-FileManager) */
 
-/* Base smooth transition for interactive elements when deselected */
+/* 1. BUTTONS & INTERACTIVE CONTROLS */
 :not([data-file-manager]):not(table) button,
-:not([data-file-manager]):not(table) a,
+:not([data-file-manager]):not(table) a.btn,
 :not([data-file-manager]):not(table) [role="button"],
-:not([data-file-manager]):not(table) .glass-card,
-:not([data-file-manager]):not(table) .cursor-pointer,
-:not([data-file-manager]):not(table) [role="tab"],
-:not([data-file-manager]):not(table) [role="menuitem"] {
-  transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1), transform 200ms cubic-bezier(0.16, 1, 0.3, 1), filter 200ms cubic-bezier(0.16, 1, 0.3, 1);
+:not([data-file-manager]):not(table) input[type="button"],
+:not([data-file-manager]):not(table) input[type="submit"] {
+  transition: transform 140ms cubic-bezier(0.2, 0.8, 0.2, 1), filter 140ms ease, box-shadow 140ms ease, border-color 140ms ease !important;
+  will-change: transform, filter;
+  outline: none !important;
 }
 
-/* For text/links/labels/headings when active */
-span[data-touch-active="true"],
-a[data-touch-active="true"],
-p[data-touch-active="true"],
-label[data-touch-active="true"],
-h1[data-touch-active="true"],
-h2[data-touch-active="true"],
-h3[data-touch-active="true"],
-h4[data-touch-active="true"] {
-  background-color: var(--touch-text-bg, rgba(255, 255, 255, 0.16)) !important;
-  box-shadow: none !important;
-  outline: none !important;
-  border-radius: 6px !important;
-  padding-left: 5px !important;
-  padding-right: 5px !important;
-  transform: scale(0.985) !important;
+:not([data-file-manager]):not(table) button:active,
+:not([data-file-manager]):not(table) a.btn:active,
+:not([data-file-manager]):not(table) [role="button"]:active,
+:not([data-file-manager]):not(table) input[type="button"]:active,
+:not([data-file-manager]):not(table) input[type="submit"]:active,
+:not([data-file-manager]):not(table) button.click-active,
+:not([data-file-manager]):not(table) [role="button"].click-active {
+  transform: scale(0.95) translateY(1px) !important;
+  filter: brightness(1.25) contrast(1.05) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4), inset 0 0 12px rgba(255, 255, 255, 0.15) !important;
+}
+
+/* 2. SPECIFIC INTERACTIVE ACTION CARDS (Server Cards, Quick Action Cards, Clickable Metric Cards) */
+:not([data-file-manager]):not(table) .server-card,
+:not([data-file-manager]):not(table) .action-card,
+:not([data-file-manager]):not(table) .interactive-card,
+:not([data-file-manager]):not(table) a.glass-card,
+:not([data-file-manager]):not(table) button.glass-card,
+:not([data-file-manager]):not(table) .glass-card.cursor-pointer,
+:not([data-file-manager]):not(table) .glass-card[role="button"] {
+  opacity: 1 !important;
+  background: linear-gradient(145deg, #150f32 0%, #0e0a24 100%) !important;
+  transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 160ms ease, box-shadow 160ms ease, filter 160ms ease !important;
+  will-change: transform, filter;
+}
+
+:not([data-file-manager]):not(table) .server-card:active,
+:not([data-file-manager]):not(table) .action-card:active,
+:not([data-file-manager]):not(table) .interactive-card:active,
+:not([data-file-manager]):not(table) a.glass-card:active,
+:not([data-file-manager]):not(table) button.glass-card:active,
+:not([data-file-manager]):not(table) .glass-card.cursor-pointer:active,
+:not([data-file-manager]):not(table) .glass-card[role="button"]:active,
+:not([data-file-manager]):not(table) .glass-card.click-active,
+:not([data-file-manager]):not(table) .server-card.click-active {
+  opacity: 1 !important;
+  background: linear-gradient(145deg, #19113b 0%, #110c2c 100%) !important;
+  transform: scale(0.985) translateY(1px) !important;
   filter: brightness(1.18) !important;
-  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 120ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+  border-color: rgba(168, 85, 247, 0.55) !important;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55), 0 0 14px rgba(168, 85, 247, 0.25) !important;
+}
+
+/* 3. CLICKABLE TEXT, LINKS, HEADINGS & LABELS */
+:not([data-file-manager]):not(table) a:not(.btn),
+:not([data-file-manager]):not(table) span.cursor-pointer,
+:not([data-file-manager]):not(table) p.cursor-pointer,
+:not([data-file-manager]):not(table) label.cursor-pointer,
+:not([data-file-manager]):not(table) .cursor-pointer:not(.glass-card):not(.server-card):not(.action-card):not(button) {
+  transition: transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 120ms ease, filter 120ms ease !important;
+  outline: none !important;
+}
+
+:not([data-file-manager]):not(table) a:not(.btn):active,
+:not([data-file-manager]):not(table) span.cursor-pointer:active,
+:not([data-file-manager]):not(table) p.cursor-pointer:active,
+:not([data-file-manager]):not(table) label.cursor-pointer:active,
+:not([data-file-manager]):not(table) .cursor-pointer:not(.glass-card):not(.server-card):not(.action-card):not(button):active,
+:not([data-file-manager]):not(table) .cursor-pointer:not(.glass-card):not(.server-card):not(.action-card).click-active {
+  transform: scale(0.97) !important;
+  opacity: 0.85 !important;
+  filter: brightness(1.25) !important;
+}
+
+/* 4. TABS, MENU ITEMS & LIST ITEMS */
+:not([data-file-manager]):not(table) [role="tab"],
+:not([data-file-manager]):not(table) [role="menuitem"],
+:not([data-file-manager]):not(table) li.cursor-pointer {
+  transition: transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 120ms ease !important;
+  outline: none !important;
+}
+
+:not([data-file-manager]):not(table) [role="tab"]:active,
+:not([data-file-manager]):not(table) [role="menuitem"]:active,
+:not([data-file-manager]):not(table) li.cursor-pointer:active,
+:not([data-file-manager]):not(table) [role="tab"].click-active {
+  transform: scale(0.96) !important;
+  background-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* 5. STRICT FILE MANAGER ISOLATION (ZERO TOUCH ANIMATION FOR ALL FILE MANAGER CHILDREN) */
+[data-file-manager] *,
+[data-component="file-manager"] *,
+.file-manager-container * {
+  transform: none !important;
+  animation: none !important;
+  filter: none !important;
+}
+
+[data-file-manager] *.click-active,
+[data-component="file-manager"] *.click-active,
+.file-manager-container *.click-active,
+[data-file-manager] *[data-touch-active],
+[data-component="file-manager"] *[data-touch-active],
+.file-manager-container *[data-touch-active] {
+  transform: none !important;
+  filter: none !important;
+  box-shadow: none !important;
+}
+
+@keyframes loadingBar {
+  0% {
+    width: 0%;
+    margin-left: 0%;
+  }
+  50% {
+    width: 70%;
+    margin-left: 15%;
+  }
+  100% {
+    width: 100%;
+    margin-left: 0%;
+  }
+}
+
+.animate-loadingBar {
+  animation: loadingBar 1.8s ease-in-out infinite;
 }
 
 

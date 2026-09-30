@@ -1,5 +1,5 @@
 {
-  "name": "Craft Command Center",
+  "name": "Xorvila",
   "description": "An advanced, high-performance Minecraft and proxy server game hosting panel.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

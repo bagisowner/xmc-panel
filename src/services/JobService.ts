@@ -48,12 +48,13 @@ export class JobService {
     return JobService.instance;
   }
 
-  public getJobs(): Job[] {
-    return this.db.getTable('jobs');
+  public async getJobs(): Promise<Job[]> {
+    return await this.db.getTable('jobs');
   }
 
-  public getJob(id: string): Job | undefined {
-    return this.db.getTable('jobs').find(j => j.id === id);
+  public async getJob(id: string): Promise<Job | undefined> {
+    const jobs = await this.db.getTable('jobs');
+    return jobs.find(j => j.id === id);
   }
 
   public async createJob(
@@ -106,7 +107,8 @@ export class JobService {
   }
 
   private async executeInstallJob(jobId: string, serverId: string) {
-    const server = this.db.getTable('servers').find(s => s.id === serverId);
+    const servers = await this.db.getTable('servers');
+    const server = servers.find(s => s.id === serverId);
     if (!server) {
       throw new Error(`Server ${serverId} not found in database.`);
     }

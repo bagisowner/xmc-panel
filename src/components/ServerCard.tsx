@@ -11,6 +11,7 @@ interface ServerCardProps {
   onSelect: (serverId: string) => void;
   onPowerAction: (serverId: string, action: 'start' | 'stop' | 'restart' | 'kill') => void;
   onOpenConsole: (serverId: string) => void;
+  onDeleteServer?: (server: any) => void;
 }
 
 export const ServerCard: React.FC<ServerCardProps> = ({
@@ -18,7 +19,8 @@ export const ServerCard: React.FC<ServerCardProps> = ({
   isSelected,
   onSelect,
   onPowerAction,
-  onOpenConsole
+  onOpenConsole,
+  onDeleteServer
 }) => {
   const [copied, setCopied] = useState(false);
   const [powerLoading, setPowerLoading] = useState(false);
@@ -132,7 +134,7 @@ export const ServerCard: React.FC<ServerCardProps> = ({
   return (
     <div
       onClick={() => onSelect(server.id)}
-      className={`group relative flex flex-col justify-between glass-card rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer ${
+      className={`group relative flex flex-col justify-between glass-card server-card rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer ${
         isSelected
           ? 'border-purple-400 ring-2 ring-purple-400/50 bg-purple-950/40 shadow-purple-900/30'
           : 'hover:border-purple-400/50'
@@ -241,17 +243,33 @@ export const ServerCard: React.FC<ServerCardProps> = ({
 
       {/* Action Footer */}
       <div className="p-3 bg-purple-950/30 border-t border-purple-500/20 flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenConsole(server.id);
-          }}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-purple-200 hover:text-white bg-purple-950/60 hover:bg-purple-900/80 border border-purple-500/30 rounded-lg transition-colors shadow-sm"
-        >
-          <TerminalIcon className="w-3.5 h-3.5 text-purple-400" />
-          <span>Console</span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenConsole(server.id);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-purple-200 hover:text-white bg-purple-950/60 hover:bg-purple-900/80 border border-purple-500/30 rounded-lg transition-colors shadow-sm cursor-pointer"
+          >
+            <TerminalIcon className="w-3.5 h-3.5 text-purple-400" />
+            <span>Console</span>
+          </button>
+
+          {onDeleteServer && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteServer(server);
+              }}
+              className="p-1.5 text-rose-400 hover:text-white bg-rose-950/45 hover:bg-rose-600 border border-rose-500/30 hover:border-rose-400 rounded-lg transition-all cursor-pointer active:scale-90"
+              title="Permanently Delete Server Instance"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
 
         {/* Power Action Buttons */}
         <div className="flex items-center gap-1.5">

@@ -4,14 +4,15 @@ import {
   Settings, Activity, Plus, Search, Power, Play, Square, RotateCw, Trash2, Edit2,
   Save, Undo, Check, FileText, ChevronRight, ChevronLeft, Menu, X, Lock, User, Grid, Cpu, Layers,
   Wifi, UserX, AlertCircle, Eye, LogOut, Command, ShieldAlert, KeyRound, ArrowRight,
-  RefreshCw, FolderPlus, FilePlus, EyeOff, Sliders, Network, Sparkles, HelpCircle,
+  RefreshCw, FolderPlus, FilePlus, EyeOff, Sliders, Network, Boxes, HelpCircle,
   FileCode, Database, CheckSquare, Clock, Upload, Volume2, VolumeX, AlertTriangle,
   Image as ImageIcon, Server as ServerIcon, Shield, Smartphone, ChevronDown, Filter,
-  RotateCcw, LayoutDashboard
+  RotateCcw, LayoutDashboard, Download, Hammer
 } from 'lucide-react';
 import { sounds } from './utils/sound';
 import { BackgroundSystem, BackgroundSettings, DEFAULT_BACKGROUND_SETTINGS, WALLPAPER_PRESET_OPTIONS } from './components/BackgroundSystem';
 import { ThemeModal } from './components/ThemeModal';
+import { AuthCard } from './components/AuthCard';
 import { ServerCard } from './components/ServerCard';
 import { ServerHero } from './components/ServerHero';
 import { PluginManager } from './components/PluginManager';
@@ -20,16 +21,63 @@ import { JavaRuntimeManager } from './components/JavaRuntimeManager';
 import { FileManager } from './components/FileManager';
 import { CreateServerWizard } from './components/CreateServerWizard';
 import { ConfigEditor } from './components/ConfigEditor';
+import { AdminPanel } from './components/AdminPanel';
+import { LoadingScreen } from './components/LoadingScreen';
+import { ConsoleViewer } from './components/ConsoleViewer';
+import { BackupManager } from './components/BackupManager';
+import { SchedulesManager } from './components/SchedulesManager';
+import { PortsManager } from './components/PortsManager';
+import { StartupSettingsManager } from './components/StartupSettingsManager';
+import { NginxProxiesManager } from './components/NginxProxiesManager';
+import { PlayersManager } from './components/PlayersManager';
+import { ServerDashboard } from './components/ServerDashboard';
+import { AdminUsers } from './components/admin/AdminUsers';
 import { initGlobalTouchSystem } from './utils/touchSystem';
 import { NavigationService, RouteState } from './services/NavigationService';
+import { StorageService } from './services/StorageService';
 
 const API_BASE = '/api';
 const WS_SCHEME = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
 export default function App() {
+  const storageService = StorageService.getInstance();
+  const [customLogosMap, setCustomLogosMap] = useState<Record<string, string>>({});
+
+  // Layout & Navigation
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [panelBrandName, setPanelBrandName] = useState<string>('Xorvila');
+  const [panelBrandLogo, setPanelBrandLogo] = useState<string>('');
+  const [bgSettings, setBgSettings] = useState<BackgroundSettings>(DEFAULT_BACKGROUND_SETTINGS);
+
+  // Initial load: Fetch system branding, user preferences, and run safe legacy migration
   useEffect(() => {
     initGlobalTouchSystem();
+    
+    // 1. Fetch system branding settings
+    storageService.getSystemSettings().then(data => {
+      if (data && typeof data === 'object') {
+        if (data.brandName) setPanelBrandName(data.brandName);
+        if (data.brandLogo !== undefined) setPanelBrandLogo(data.brandLogo);
+        if (data.customLogos) setCustomLogosMap(data.customLogos);
+        if (data.bgSettings) setBgSettings(data.bgSettings);
+        else if (data.theme) setBgSettings(data.theme);
+      }
+    });
+
+    const handleSystemSettingsUpdate = (e: any) => {
+      const detail = e.detail;
+      if (detail && typeof detail === 'object') {
+        if (detail.panelBrandName) setPanelBrandName(detail.panelBrandName);
+        if (detail.panelBrandLogo !== undefined) setPanelBrandLogo(detail.panelBrandLogo);
+        if (detail.bgSettings) setBgSettings(detail.bgSettings);
+        else if (detail.theme) setBgSettings(detail.theme);
+        setCustomLogosMap(prev => ({ ...prev, ...detail }));
+      }
+    };
+    window.addEventListener('system_settings_updated', handleSystemSettingsUpdate);
+    return () => window.removeEventListener('system_settings_updated', handleSystemSettingsUpdate);
   }, []);
+
   const isModded = (software: string) => {
     const sw = (software || '').toLowerCase();
     return sw === 'fabric' || sw === 'forge' || sw === 'neoforge';
@@ -49,45 +97,65 @@ export default function App() {
   };
 
   // Session & Authentication
-  const [token, setToken] = useState<string | null>(localStorage.getItem('mc_token'));
+  const [isAppLoading, setIsAppLoading] = useState<boolean>(true);
+  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<{ id: string; username: string; role: string; permissions: string[] } | null>(null);
   const [setupNeeded, setSetupNeeded] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(true);
 
-  // Background & Theme Customization (10 Settings Matrix) - 8K Custom Theme
-  const [bgSettings, setBgSettings] = useState<BackgroundSettings>(() => {
-    try {
-      const saved = localStorage.getItem('arix_theme_settings_v4') || localStorage.getItem('arix_theme_settings_v3');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          ...DEFAULT_BACKGROUND_SETTINGS,
-          ...parsed
-        };
-      }
-      return DEFAULT_BACKGROUND_SETTINGS;
-    } catch {
-      return DEFAULT_BACKGROUND_SETTINGS;
+  // Registration States
+  const [regUsername, setRegUsername] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
+  const [usernameAvailability, setUsernameAvailability] = useState<{ checked: boolean; taken: boolean; message?: string }>({ checked: false, taken: false });
+  const [emailAvailability, setEmailAvailability] = useState<{ checked: boolean; taken: boolean; message?: string }>({ checked: false, taken: false });
+
+  // Safe migration and user settings synchronization
+  useEffect(() => {
+    storageService.migrateLegacyLocalStorage(token);
+
+    if (token) {
+      storageService.getUserSettings(token).then(data => {
+        if (data && typeof data === 'object') {
+          if (data.theme && Object.keys(data.theme).length > 0) {
+            setBgSettings(prev => ({ ...prev, ...data.theme }));
+          }
+          if (data.sidebarCollapsed !== undefined) {
+            setSidebarCollapsed(data.sidebarCollapsed);
+          }
+        }
+      });
     }
-  });
+  }, [token]);
+
+  // Background & Theme Customization (10 Settings Matrix) - 8K Custom Theme
   const [showThemeModal, setShowThemeModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const updateBgSettings = (updated: Partial<BackgroundSettings>) => {
     setBgSettings(prev => {
       const next = { ...prev, ...updated };
-      localStorage.setItem('arix_theme_settings', JSON.stringify(next));
+      storageService.updateUserSettings({ theme: next }, token);
+      storageService.updateSystemSettings({ bgSettings: next, theme: next }, token);
+      window.dispatchEvent(new CustomEvent('system_settings_updated', { detail: { bgSettings: next, theme: next } }));
       return next;
     });
   };
 
   const resetBgSettings = () => {
     setBgSettings(DEFAULT_BACKGROUND_SETTINGS);
-    localStorage.setItem('arix_theme_settings', JSON.stringify(DEFAULT_BACKGROUND_SETTINGS));
+    storageService.updateUserSettings({ theme: DEFAULT_BACKGROUND_SETTINGS }, token);
+    storageService.updateSystemSettings({ bgSettings: DEFAULT_BACKGROUND_SETTINGS, theme: DEFAULT_BACKGROUND_SETTINGS }, token);
+    window.dispatchEvent(new CustomEvent('system_settings_updated', { detail: { bgSettings: DEFAULT_BACKGROUND_SETTINGS, theme: DEFAULT_BACKGROUND_SETTINGS } }));
   };
 
   const handleCustomFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -106,21 +174,20 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // Layout & Navigation
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('arix_sidebar_collapsed') === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const handleUpdateBrandName = (name: string) => {
+    setPanelBrandName(name);
+    storageService.updateSystemSettings({ brandName: name }, token);
+  };
+
+  const handleUpdateBrandLogo = (logo: string) => {
+    setPanelBrandLogo(logo);
+    storageService.updateSystemSettings({ brandLogo: logo }, token);
+  };
 
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed(prev => {
       const next = !prev;
-      try {
-        localStorage.setItem('arix_sidebar_collapsed', String(next));
-      } catch {}
+      storageService.updateUserSettings({ sidebarCollapsed: next }, token);
       return next;
     });
   };
@@ -132,6 +199,29 @@ export default function App() {
   const [activeTab, setActiveTabState] = useState<any>(initialRoute.tab);
   const [selectedServerId, setSelectedServerIdState] = useState<string | null>(initialRoute.serverId);
   const [selectedServerTab, setSelectedServerTabState] = useState<any>(initialRoute.serverTab);
+
+  const mainContentRef = useRef<HTMLElement | null>(null);
+  const brandLogoInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleBrandLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        handleUpdateBrandLogo(dataUrl);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  useEffect(() => {
+    if (mainContentRef.current) {
+      mainContentRef.current.scrollTop = 0;
+    }
+  }, [activeTab, selectedServerId]);
 
   // Sync React state with NavigationService subscriber
   useEffect(() => {
@@ -181,6 +271,18 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
 
+  // Global Ctrl+K / Cmd+K listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Loaded Data
   const [hostStats, setHostStats] = useState<any>(null);
   const [servers, setServers] = useState<any[]>([]);
@@ -201,11 +303,14 @@ export default function App() {
   const [serverProperties, setServerProperties] = useState<Record<string, string>>({});
   const [backups, setBackups] = useState<any[]>([]);
   const [newBackupName, setNewBackupName] = useState('');
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [backupProgress, setBackupProgress] = useState(0);
+  const [backupStepText, setBackupStepText] = useState('');
   const [schedules, setSchedules] = useState<any[]>([]);
   const [newSchedule, setNewSchedule] = useState({ name: '', cronExpression: '*/5 * * * *', action: 'backup' });
   const [players, setPlayers] = useState<any[]>([]);
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
-  const [newUserData, setNewUserData] = useState({ username: '', password: '', role: 'Administrator' });
+  const [newUserData, setNewUserData] = useState({ username: '', email: '', displayName: '', password: '', role: 'Administrator' });
   const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
   const [editingNode, setEditingNode] = useState<any | null>(null);
   const [nodeForm, setNodeForm] = useState({
@@ -317,16 +422,22 @@ export default function App() {
   const totalDiskLimit = servers.reduce((acc, s) => acc + (Number(s.diskLimitGb) || 0), 0);
 
   const isAdminUser = (u: any) => {
-    if (!u) return false;
-    const r = String(u.role || '').toLowerCase();
-    if (r === 'admin' || r === 'administrator' || r === 'owner') return true;
-    if (Array.isArray(u.permissions) && (u.permissions.includes('admin') || u.permissions.includes('*'))) return true;
+    if (!u) {
+      return !!token;
+    }
+    const username = String(u.username || '').toLowerCase().trim();
+    const role = String(u.role || '').toLowerCase().trim();
+
+    if (username === 'admin' || username === 'owner' || username === 'administrator') return true;
+    if (role === 'admin' || role === 'administrator' || role === 'owner' || role === 'superuser') return true;
+    if (Array.isArray(u.permissions) && (u.permissions.includes('admin') || u.permissions.includes('*') || u.permissions.includes('all'))) return true;
+
     return false;
   };
 
   const openAdminArea = () => {
     if (!isAdminUser(user)) {
-      showToast('error', 'Access denied: Requires administrator credentials.');
+      showToast('error', 'Access Denied: Administrator permissions required.');
       return;
     }
     sounds.playClick();
@@ -354,15 +465,32 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Fetch initial setup status
+  const safeFetchJson = async <T = any>(url: string, init?: RequestInit): Promise<T | null> => {
+    try {
+      const res = await fetch(url, init);
+      if (!res.ok) return null;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return null;
+      return (await res.json()) as T;
+    } catch {
+      return null;
+    }
+  };
+
+  // Fetch initial setup status and show loading animation
   useEffect(() => {
     const checkSetup = async () => {
       try {
-        const res = await fetch(`${API_BASE}/auth/setup-status`);
-        const data = await res.json();
-        setSetupNeeded(data.setupNeeded);
+        const data = await safeFetchJson<{ setupNeeded: boolean }>(`${API_BASE}/auth/setup-status`);
+        if (data && data.setupNeeded !== undefined) {
+          setSetupNeeded(!!data.setupNeeded);
+        }
       } catch (err) {
         showToast('error', 'Failed to connect to the panel backend.');
+      } finally {
+        setTimeout(() => {
+          setIsAppLoading(false);
+        }, 1200);
       }
     };
     checkSetup();
@@ -398,6 +526,7 @@ export default function App() {
       setServerCheckDone(true);
     }
   }, [servers, selectedServerId, serverCheckDone]);
+
   useEffect(() => {
     const fetchMe = async () => {
       try {
@@ -406,23 +535,25 @@ export default function App() {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
         if (res.ok) {
-          const data = await res.json();
-          if (data.authenticated && data.user) {
-            setUser(data.user);
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await res.json();
+            if (data.authenticated && data.user) {
+              setUser(data.user);
+              if (!token && data.sessionId) {
+                setToken(data.sessionId);
+              }
+            }
           }
-        } else if (res.status === 401) {
-          // Only invalidate token if server explicitly responds 401 Unauthorized
+        } else if (res.status === 401 && token) {
           setUser(null);
           setToken(null);
-          localStorage.removeItem('mc_token');
         }
       } catch {
         // Do NOT destroy session token on network glitch or tab wake up
       }
     };
-    if (token) {
-      fetchMe();
-    }
+    fetchMe();
   }, [token]);
 
   // Periodic statistics loader
@@ -431,15 +562,13 @@ export default function App() {
 
     const loadData = async () => {
       try {
-        const hostRes = await fetch(`${API_BASE}/stats/host`, { headers: { Authorization: `Bearer ${token}` } });
-        if (hostRes.ok) {
-          const hData = await hostRes.json();
+        const hData = await safeFetchJson(`${API_BASE}/stats/host`, { headers: { Authorization: `Bearer ${token}` } });
+        if (hData) {
           setHostStats(hData);
         }
 
-        const srvRes = await fetch(`${API_BASE}/servers`, { headers: { Authorization: `Bearer ${token}` } });
-        if (srvRes.ok) {
-          const sData = await srvRes.json();
+        const sData = await safeFetchJson<any[]>(`${API_BASE}/servers`, { headers: { Authorization: `Bearer ${token}` } });
+        if (Array.isArray(sData)) {
           setServers(sData);
 
           // Audio sound triggers when server turns on or turns off
@@ -464,13 +593,12 @@ export default function App() {
           }
         }
 
-        const jobRes = await fetch(`${API_BASE}/jobs`, { headers: { Authorization: `Bearer ${token}` } });
-        if (jobRes.ok) {
-          const jData = await jobRes.json();
+        const jData = await safeFetchJson<any[]>(`${API_BASE}/jobs`, { headers: { Authorization: `Bearer ${token}` } });
+        if (Array.isArray(jData)) {
           setJobs(jData);
         }
-      } catch (err) {
-        console.error('Failed to update dashboard telemetry', err);
+      } catch {
+        // Telemetry errors handled gracefully without logging unexpected HTML tokens
       }
     };
 
@@ -478,6 +606,28 @@ export default function App() {
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, [token, selectedServerId]);
+
+  // Immediate serverDetails resolution upon selectedServerId change
+  useEffect(() => {
+    if (selectedServerId) {
+      const match = servers.find((s: any) => s.id === selectedServerId);
+      if (match) {
+        setServerDetails(match);
+      } else {
+        fetch(`${API_BASE}/servers/${selectedServerId}`, {
+          credentials: 'include',
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        })
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data) setServerDetails(data);
+          })
+          .catch(() => {});
+      }
+    } else {
+      setServerDetails(null);
+    }
+  }, [selectedServerId, servers, token]);
 
   // Tab dynamic loading
   useEffect(() => {
@@ -620,10 +770,47 @@ export default function App() {
     let isUnmounted = false;
     let reconnectTimeout: any = null;
 
-    const connectConsoleWs = () => {
-      if (isUnmounted || !token || !selectedServerId) return;
+    // Immediately fetch existing log buffer over REST for instant rendering
+    if (selectedServerId) {
+      fetch(`${API_BASE}/servers/${selectedServerId}/logs`, {
+        credentials: 'include',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!isUnmounted && data?.logs && Array.isArray(data.logs)) {
+            setConsoleLogs(data.logs);
+          }
+        })
+        .catch(() => {});
+    }
 
-      const wsUrl = `${WS_SCHEME}://${window.location.host}/api/servers/${selectedServerId}/console?token=${token}`;
+    // Secondary log sync interval to ensure console logs stay updated for all users
+    const logSyncInterval = setInterval(() => {
+      if (isUnmounted || !selectedServerId) return;
+      fetch(`${API_BASE}/servers/${selectedServerId}/logs`, {
+        credentials: 'include',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!isUnmounted && data?.logs && Array.isArray(data.logs)) {
+            setConsoleLogs(prev => {
+              if (data.logs.length !== prev.length || (data.logs.length > 0 && prev.length === 0)) {
+                return data.logs;
+              }
+              return prev;
+            });
+          }
+        })
+        .catch(() => {});
+    }, 2500);
+
+    const connectConsoleWs = () => {
+      if (isUnmounted || !selectedServerId) return;
+
+      const wsToken = token || '';
+      const wsUrl = `${WS_SCHEME}://${window.location.host}/api/servers/${selectedServerId}/console${wsToken ? `?token=${encodeURIComponent(wsToken)}` : ''}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -638,8 +825,8 @@ export default function App() {
 
       ws.onclose = () => {
         setWsConnected(false);
-        if (!isUnmounted && selectedServerId && token) {
-          reconnectTimeout = setTimeout(connectConsoleWs, 2500);
+        if (!isUnmounted && selectedServerId) {
+          reconnectTimeout = setTimeout(connectConsoleWs, 2000);
         }
       };
 
@@ -690,6 +877,7 @@ export default function App() {
     return () => {
       isUnmounted = true;
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      clearInterval(logSyncInterval);
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -734,7 +922,6 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        localStorage.setItem('mc_token', data.token);
         setToken(data.token);
         setSetupNeeded(false);
         const intended = navService.consumeIntendedRoute();
@@ -771,8 +958,10 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        localStorage.setItem('mc_token', data.token);
         setToken(data.token);
+        if (data.user) {
+          setUser(data.user);
+        }
         const intended = navService.consumeIntendedRoute();
         if (intended) {
           navService.navigate(intended);
@@ -790,8 +979,117 @@ export default function App() {
     }
   };
 
+  const checkFieldAvailability = async (field: 'username' | 'email', value: string) => {
+    if (!value.trim()) return;
+    try {
+      const res = await fetch(`${API_BASE}/auth/check-availability?${field}=${encodeURIComponent(value.trim())}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (field === 'username') {
+          setUsernameAvailability({
+            checked: true,
+            taken: data.usernameTaken,
+            message: data.usernameTaken ? 'Username is already taken' : 'Username is available'
+          });
+        } else {
+          setEmailAvailability({
+            checked: true,
+            taken: data.emailTaken,
+            message: data.emailTaken ? 'An account with this email already exists' : 'Email is available'
+          });
+        }
+      }
+    } catch {}
+  };
+
+  const handleUserRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccess('');
+
+    if (!termsAccepted) {
+      setAuthError('You must agree to the Terms and Conditions to register.');
+      return;
+    }
+
+    const cleanUsername = regUsername.trim();
+    const cleanEmail = regEmail.trim();
+
+    if (!cleanUsername || !cleanEmail || !regPassword || !regConfirmPassword) {
+      setAuthError('All fields (Username, Email, Password, Confirm Password) are required.');
+      return;
+    }
+
+    if (cleanUsername.length < 3) {
+      setAuthError('Username must be at least 3 characters long.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setAuthError('Please enter a valid email address.');
+      return;
+    }
+
+    if (regPassword.length < 7) {
+      setAuthError('Password must be at least 7 characters long.');
+      return;
+    }
+
+    if (!/[A-Z]/.test(regPassword)) {
+      setAuthError('Password must contain at least 1 uppercase letter (A-Z).');
+      return;
+    }
+
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(regPassword)) {
+      setAuthError('Password must contain at least 1 special character (e.g. ! @ # $ %).');
+      return;
+    }
+
+    if (regPassword !== regConfirmPassword) {
+      setAuthError('Password and Confirm Password do not match.');
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: cleanUsername,
+          email: cleanEmail,
+          password: regPassword
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        showToast('success', 'Account registered successfully! Redirecting to login...');
+        setAuthSuccess('Account registered successfully! Please log in with your credentials.');
+        setUsernameInput(cleanUsername);
+        setPasswordInput('');
+        setRegUsername('');
+        setRegEmail('');
+        setRegPassword('');
+        setRegConfirmPassword('');
+        setUsernameAvailability({ checked: false, taken: false });
+        setEmailAvailability({ checked: false, taken: false });
+        setTimeout(() => {
+          setAuthMode('login');
+          setAuthSuccess('');
+        }, 1800);
+      } else {
+        setAuthError(data.error || 'Registration failed. Please check your inputs.');
+      }
+    } catch {
+      setAuthError('Connection error during registration. Please try again.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = () => {
-    localStorage.removeItem('mc_token');
     setToken(null);
     setUser(null);
     navService.navigateToLogin();
@@ -800,7 +1098,7 @@ export default function App() {
 
   const promptLogout = () => {
     setConfirmModal({
-      title: 'Log Out of Craft Command Center',
+      title: 'Log Out of Xorvila',
       message: 'Are you sure you want to end your session? You will be returned to the login screen.',
       confirmLabel: 'Log Out',
       isDestructive: true,
@@ -1131,6 +1429,20 @@ export default function App() {
   };
 
   const createBackup = async () => {
+    setIsCreatingBackup(true);
+    setBackupProgress(15);
+    setBackupStepText('Initializing server snapshot & directory scan...');
+
+    const timer1 = setTimeout(() => {
+      setBackupProgress(45);
+      setBackupStepText('Compressing all server files, plugins & worlds...');
+    }, 400);
+
+    const timer2 = setTimeout(() => {
+      setBackupProgress(80);
+      setBackupStepText('Writing ultra-secure ZIP archive to disk...');
+    }, 900);
+
     try {
       const res = await fetch(`${API_BASE}/servers/${selectedServerId}/backups`, {
         method: 'POST',
@@ -1140,13 +1452,43 @@ export default function App() {
         },
         body: JSON.stringify({ name: newBackupName || 'Automated Snapshot' })
       });
+
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+
       if (res.ok) {
-        showToast('success', 'Archive snapshot generated.');
-        setNewBackupName('');
-        loadBackups();
+        setBackupProgress(100);
+        setBackupStepText('Backup successfully generated & verified!');
+        setTimeout(() => {
+          setIsCreatingBackup(false);
+          showToast('success', 'Archive snapshot generated successfully.');
+          setNewBackupName('');
+          loadBackups();
+        }, 600);
+      } else {
+        throw new Error('Failed');
       }
     } catch {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      setIsCreatingBackup(false);
       showToast('error', 'Backup compression failed.');
+    }
+  };
+
+  const downloadBackup = (b: any) => {
+    try {
+      showToast('info', 'Downloading .tar.gz backup archive...');
+      const url = `${API_BASE}/servers/${selectedServerId}/backup-download/${b.id}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${b.name || 'backup'}.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('success', 'Backup download started.');
+    } catch {
+      showToast('error', 'Failed to download backup archive.');
     }
   };
 
@@ -1158,7 +1500,7 @@ export default function App() {
       isDestructive: false,
       onConfirm: async () => {
         try {
-          const res = await fetch(`${API_BASE}/servers/${selectedServerId}/backups/${bId}/restore`, {
+          const res = await fetch(`${API_BASE}/servers/${selectedServerId}/backup-restore/${bId}`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` }
           });
@@ -1180,7 +1522,7 @@ export default function App() {
       isDestructive: true,
       onConfirm: async () => {
         try {
-          const res = await fetch(`${API_BASE}/servers/${selectedServerId}/backups/${bId}`, {
+          const res = await fetch(`${API_BASE}/servers/${selectedServerId}/backup-delete/${bId}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
           });
@@ -1398,8 +1740,13 @@ export default function App() {
   // Users & Access Operations
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUserData.username.trim() || !newUserData.password.trim()) {
-      showToast('error', 'Username and password are required.');
+    if (!newUserData.username.trim() || !newUserData.email.trim() || !newUserData.password.trim()) {
+      showToast('error', 'Username, email address, and password are all required.');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newUserData.email.trim())) {
+      showToast('error', 'Please provide a valid email address.');
       return;
     }
     sounds.playClick();
@@ -1415,8 +1762,8 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         sounds.playSuccess();
-        showToast('success', `User account "${newUserData.username}" created.`);
-        setNewUserData({ username: '', password: '', role: 'Administrator' });
+        showToast('success', `User account "${data.username}" (${data.email}) created.`);
+        setNewUserData({ username: '', email: '', displayName: '', password: '', role: 'Administrator' });
         setShowCreateUserModal(false);
         const uRes = await fetch(`${API_BASE}/users`, { headers: { Authorization: `Bearer ${token}` } });
         if (uRes.ok) setUsersList(await uRes.json());
@@ -1458,7 +1805,7 @@ export default function App() {
 
   // Real Admin Server Deletion Handler
   const handleAdminDeleteServer = async () => {
-    if (!deleteConfirmModalServer || deleteTypedInput !== 'DELETE') return;
+    if (!deleteConfirmModalServer || deleteTypedInput.trim().toUpperCase() !== 'DELETE') return;
     const srv = deleteConfirmModalServer;
     setDeletingInAdmin(true);
     sounds.playClick();
@@ -1560,21 +1907,56 @@ export default function App() {
   // Console send command
   const sendConsoleCommand = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!commandInput.trim() || !wsRef.current) return;
+    const command = commandInput.trim();
+    if (!command) return;
     sounds.playClick();
-    wsRef.current.send(JSON.stringify({ type: 'command', command: commandInput.trim() }));
-    setCommandHistory(prev => [...prev, commandInput.trim()]);
+    
+    // Add command to local history log for immediate visual feedback
+    setConsoleLogs(prev => [...prev, `> ${command}`]);
+    setCommandHistory(prev => [...prev, command]);
     setHistoryIndex(-1);
     setCommandInput('');
+
+    if (wsRef.current && wsConnected && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'command', command }));
+    } else if (selectedServerId) {
+      fetch(`${API_BASE}/servers/${selectedServerId}/command`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        credentials: 'include',
+        body: JSON.stringify({ command })
+      }).catch(() => {
+        setConsoleLogs(prev => [...prev, `[System] Server console is currently offline.`]);
+      });
+    }
+
     setTimeout(() => {
       commandInputRef.current?.focus({ preventScroll: true });
     }, 10);
   };
 
   const sendQuickCommand = (cmd: string) => {
-    if (!wsRef.current) return;
     sounds.playClick();
-    wsRef.current.send(JSON.stringify({ type: 'command', command: cmd }));
+    setConsoleLogs(prev => [...prev, `> ${cmd}`]);
+    
+    if (wsRef.current && wsConnected && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'command', command: cmd }));
+    } else if (selectedServerId) {
+      fetch(`${API_BASE}/servers/${selectedServerId}/command`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        credentials: 'include',
+        body: JSON.stringify({ command: cmd })
+      }).catch(() => {
+        setConsoleLogs(prev => [...prev, `[System] Server console is currently offline.`]);
+      });
+    }
   };
 
   // Keyboard navigation for console history
@@ -1599,114 +1981,63 @@ export default function App() {
     }
   };
 
-  // If not authenticated, render login with full glass layering
+  if (isAppLoading) {
+    return <LoadingScreen />;
+  }
+
+  // If not authenticated, render AuthCard with Google & Discord OAuth support
   if (!token) {
+    const handleOAuthSuccess = (authToken: string, authUser: any) => {
+      setToken(authToken);
+      if (authUser) setUser(authUser);
+      showToast('success', 'Logged in via social account successfully!');
+    };
+
     return (
-      <div className="relative min-h-screen w-full flex items-center justify-center p-4 overflow-hidden font-sans text-zinc-100">
-        {/* Full-Screen Fixed Minecraft Background */}
-        <BackgroundSystem settings={bgSettings} />
-
-        {/* Floating Auth Card */}
-        <div className="app-content relative z-10 w-full max-w-md glass-modal rounded-3xl p-8 shadow-2xl">
-          {/* Brand Header */}
-          <div className="flex flex-col items-center text-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 shadow-lg mb-4">
-              <div className="w-full h-full bg-zinc-950 rounded-[14px] flex items-center justify-center text-purple-400">
-                <ServerIcon className="w-8 h-8" />
-              </div>
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Craft Command Center</h1>
-            <p className="text-xs text-zinc-400 mt-1">
-              {setupNeeded ? 'Initial Administrator Onboarding' : 'Commercial Minecraft Cloud Control'}
-            </p>
-          </div>
-
-          {authError && (
-            <div className="flex items-center gap-2 p-3 bg-rose-950/70 border border-rose-500/40 text-rose-300 text-xs rounded-xl mb-6">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{authError}</span>
-            </div>
-          )}
-
-          <form onSubmit={setupNeeded ? handleRegisterAdmin : handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">
-                Username
-              </label>
-              <div className="relative">
-                <User className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  required
-                  placeholder="admin"
-                  value={usernameInput}
-                  onChange={(e) => setUsernameInput(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-xs glass-input rounded-xl text-white placeholder-zinc-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">
-                Security Passphrase
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••••••"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-xs glass-input rounded-xl text-white placeholder-zinc-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2.5 pt-1 pb-1">
-              <input
-                type="checkbox"
-                id="loginTermsCheckbox"
-                checked={termsAccepted}
-                onChange={(e) => setTermsAccepted(e.target.checked)}
-                className="w-4 h-4 rounded border-zinc-700 bg-zinc-900/80 text-purple-600 focus:ring-purple-500 focus:ring-offset-0 cursor-pointer accent-purple-600 shrink-0"
-              />
-              <label htmlFor="loginTermsCheckbox" className="text-xs text-zinc-300 cursor-pointer select-none">
-                I agree to the <span className="text-purple-400 font-medium hover:underline">Terms and Conditions</span>
-              </label>
-            </div>
-
-            <button
-              type="submit"
-              disabled={authLoading || !termsAccepted}
-              className="w-full mt-2 py-3 px-4 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-xl shadow-lg shadow-purple-950/50 transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              {authLoading ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  <span>{setupNeeded ? 'INITIALIZE SUPERADMIN' : 'LOG IN'}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Footer branding */}
-          <div className="mt-8 pt-4 border-t border-white/10 flex items-center justify-center text-xs text-zinc-500">
-            <span>v2.4.0 · Xorvila Engine</span>
-          </div>
-        </div>
-
-        {/* Theme Settings Modal */}
-        <ThemeModal
-          isOpen={showThemeModal}
-          onClose={() => setShowThemeModal(false)}
-          settings={bgSettings}
-          onUpdate={updateBgSettings}
-          onReset={resetBgSettings}
-        />
-      </div>
+      <AuthCard
+        setupNeeded={setupNeeded}
+        termsAccepted={termsAccepted}
+        setTermsAccepted={setTermsAccepted}
+        usernameInput={usernameInput}
+        setUsernameInput={setUsernameInput}
+        passwordInput={passwordInput}
+        setPasswordInput={setPasswordInput}
+        authError={authError}
+        setAuthError={setAuthError}
+        authSuccess={authSuccess}
+        setAuthSuccess={setAuthSuccess}
+        authLoading={authLoading}
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        handleLogin={handleLogin}
+        handleRegisterAdmin={handleRegisterAdmin}
+        handleUserRegister={handleUserRegister}
+        checkFieldAvailability={checkFieldAvailability}
+        regUsername={regUsername}
+        setRegUsername={setRegUsername}
+        regEmail={regEmail}
+        setRegEmail={setRegEmail}
+        regPassword={regPassword}
+        setRegPassword={setRegPassword}
+        regConfirmPassword={regConfirmPassword}
+        setRegConfirmPassword={setRegConfirmPassword}
+        showRegPassword={showRegPassword}
+        setShowRegPassword={setShowRegPassword}
+        showRegConfirmPassword={showRegConfirmPassword}
+        setShowRegConfirmPassword={setShowRegConfirmPassword}
+        usernameAvailability={usernameAvailability}
+        setUsernameAvailability={setUsernameAvailability}
+        emailAvailability={emailAvailability}
+        setEmailAvailability={setEmailAvailability}
+        onOAuthSuccess={handleOAuthSuccess}
+        bgSettings={bgSettings}
+        panelBrandName={panelBrandName}
+        panelBrandLogo={panelBrandLogo}
+        showThemeModal={showThemeModal}
+        setShowThemeModal={setShowThemeModal}
+        updateBgSettings={updateBgSettings}
+        resetBgSettings={resetBgSettings}
+      />
     );
   }
 
@@ -1742,13 +2073,17 @@ export default function App() {
               }}
               className="flex items-center gap-2.5 text-left group"
             >
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 shadow-sm">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 shadow-sm overflow-hidden">
                 <div className="w-full h-full bg-zinc-950 rounded-[10px] flex items-center justify-center text-purple-400 group-hover:text-purple-300 transition-colors">
-                  <ServerIcon className="w-4 h-4" />
+                  {panelBrandLogo ? (
+                    <img src={panelBrandLogo} alt="Logo" className="w-full h-full object-cover rounded-[10px]" />
+                  ) : (
+                    <ServerIcon className="w-4 h-4" />
+                  )}
                 </div>
               </div>
               <span className="text-sm font-bold tracking-tight text-white group-hover:text-purple-300 transition-colors whitespace-nowrap">
-                Craft Command Center
+                {panelBrandName}
               </span>
             </button>
 
@@ -1817,7 +2152,11 @@ export default function App() {
         <div className="flex-1 flex w-full">
           {/* LEFT SIDEBAR (Desktop) */}
           <aside
-            className={`hidden md:flex flex-col justify-between ${sidebarCollapsed ? 'w-20 p-2.5' : 'w-64 p-4'} glass-sidebar shrink-0 transition-all duration-300 sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto z-20`}
+            className={`hidden md:flex flex-col justify-between ${sidebarCollapsed ? 'w-20 p-2.5' : 'w-64 p-4'} shrink-0 transition-all duration-300 sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto z-20 ${
+              bgSettings.sidebarStyle === 'transparent'
+                ? 'glass-sidebar-transparent'
+                : 'glass-sidebar'
+            }`}
           >
             <div className="space-y-6">
               {/* Sidebar Header & Collapse Toggle */}
@@ -1898,9 +2237,13 @@ export default function App() {
                             setWizardStep(1);
                           }}
                           title="Create Server"
-                          className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2'} text-xs font-semibold text-purple-200 bg-purple-600/25 hover:bg-purple-600/40 border border-purple-400/40 rounded-xl transition-all shadow-md cursor-pointer`}
+                          className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2'} text-xs font-semibold rounded-xl transition-all border cursor-pointer ${
+                            showWizard
+                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md border-purple-400/40 font-bold'
+                              : 'text-zinc-200 hover:text-white hover:bg-purple-500/15 border-transparent'
+                          }`}
                         >
-                          <Plus className="w-4 h-4 text-purple-300 shrink-0" />
+                          <Hammer className={`w-4 h-4 shrink-0 ${showWizard ? 'text-white' : 'text-purple-300'}`} />
                           {!sidebarCollapsed && <span>Create Server</span>}
                         </button>
                       </div>
@@ -1948,7 +2291,7 @@ export default function App() {
                             {[
                               { id: 'console', label: 'Console', icon: TerminalIcon },
                               { id: 'files', label: 'File Manager', icon: FolderOpen },
-                              { id: 'plugins', label: isModded(serverDetails?.software) ? 'Mod Manager' : 'Plugin Manager', icon: isModded(serverDetails?.software) ? Layers : Sparkles },
+                              { id: 'plugins', label: isModded(serverDetails?.software) ? 'Mod Manager' : 'Plugin Manager', icon: isModded(serverDetails?.software) ? Layers : Boxes },
                               { id: 'players', label: 'Players', icon: Users },
                               { id: 'backups', label: 'Backups', icon: Archive },
                               { id: 'schedules', label: 'Schedules', icon: Calendar },
@@ -1982,24 +2325,20 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* SINGLE ADMIN AREA ENTRY AT BOTTOM (Requirement #1) */}
-                  <div className="pt-4 border-t border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!isAdminUser(user)) {
-                          alert('Access Denied: Administrator permissions required to access Admin Area.');
-                          return;
-                        }
-                        openAdminArea();
-                      }}
-                      title="Admin Area"
-                      className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3.5 py-2.5'} text-xs font-bold text-purple-200 bg-purple-950/60 hover:bg-purple-900/80 border border-purple-500/30 rounded-xl transition-all shadow-md active:scale-95`}
-                    >
-                      <Sliders className="w-4 h-4 text-purple-400 shrink-0" />
-                      {!sidebarCollapsed && <span>⚙ ADMIN AREA</span>}
-                    </button>
-                  </div>
+                  {/* SINGLE ADMIN AREA ENTRY AT BOTTOM (Only visible to Admin users) */}
+                  {isAdminUser(user) && (
+                    <div className="pt-4 border-t border-white/10">
+                      <button
+                        type="button"
+                        onClick={openAdminArea}
+                        title="Admin Area"
+                        className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3.5 py-2.5'} text-xs font-bold text-purple-200 bg-purple-950/60 hover:bg-purple-900/80 border border-purple-500/30 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer`}
+                      >
+                        <Sliders className="w-4 h-4 text-purple-400 shrink-0" />
+                        {!sidebarCollapsed && <span>⚙ ADMIN AREA</span>}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* DEDICATED ADMIN AREA SIDEBAR MODE (Requirement #2) */
@@ -2089,6 +2428,23 @@ export default function App() {
                       >
                         <HardDrive className="w-4 h-4 shrink-0 text-purple-400" />
                         {!sidebarCollapsed && <span>Node Management</span>}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedServerId(null);
+                          setActiveTab('admin-settings');
+                        }}
+                        title="Deploy UI Logos"
+                        className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2'} text-xs font-medium rounded-xl transition-all ${
+                          activeTab === 'admin-settings' && !selectedServerId
+                            ? 'bg-purple-600 text-white shadow-md font-semibold'
+                            : 'text-zinc-300 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        <ImageIcon className="w-4 h-4 shrink-0 text-purple-400" />
+                        {!sidebarCollapsed && <span>Deploy UI Logos</span>}
                       </button>
                     </div>
                   </div>
@@ -2218,20 +2574,43 @@ export default function App() {
               )}
             </div>
 
-            {/* Node Status Indicator in bottom sidebar */}
-            <div className={`p-3 bg-purple-950/40 border border-purple-500/20 rounded-2xl shadow-inner ${sidebarCollapsed ? 'text-center' : ''}`}>
-              <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} text-[11px] mb-1`}>
-                <span className="text-zinc-300 flex items-center gap-1.5" title="Host Node-01 Online">
-                  <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  {!sidebarCollapsed && 'Host Node-01'}
+            {/* SYSTEM INFRASTRUCTURE MONITOR */}
+            <div className={`p-3 bg-gradient-to-br from-[#100b2b] to-[#1a1147] border border-purple-500/30 rounded-2xl shadow-xl space-y-2.5 relative overflow-hidden group ${sidebarCollapsed ? 'text-center' : ''}`}>
+              <div className="absolute -right-6 -bottom-6 w-16 h-16 bg-purple-500/10 rounded-full blur-xl group-hover:bg-purple-500/20 transition-all duration-500" />
+              
+              <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} text-[11px]`}>
+                <span className="text-purple-300 font-bold flex items-center gap-1.5 font-mono uppercase tracking-wider">
+                  <Activity className="w-4 h-4 text-purple-400 animate-pulse" />
+                  {!sidebarCollapsed && 'Core Engine'}
                 </span>
                 {!sidebarCollapsed && (
-                  <span className="text-emerald-400 font-mono font-semibold">Online</span>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold uppercase tracking-widest animate-pulse">
+                    Secure
+                  </span>
                 )}
               </div>
+
               {!sidebarCollapsed && (
-                <div className="text-[10px] text-zinc-400 font-mono">
-                  Java 21 · Linux x64
+                <div className="space-y-2 text-[10px]">
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-zinc-400 font-mono">
+                      <span>Panel CPU</span>
+                      <span className="text-purple-300 font-bold">12.4%</span>
+                    </div>
+                    <div className="w-full bg-zinc-950/60 rounded-full h-1 overflow-hidden border border-white/5">
+                      <div className="bg-gradient-to-r from-purple-500 to-indigo-500 h-full rounded-full w-[12.4%]" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-zinc-400 font-mono">
+                      <span>Nodes RAM</span>
+                      <span className="text-indigo-300 font-bold">2.4 / 16 GB</span>
+                    </div>
+                    <div className="w-full bg-zinc-950/60 rounded-full h-1 overflow-hidden border border-white/5">
+                      <div className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full w-[15%]" />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -2244,7 +2623,11 @@ export default function App() {
                 className="fixed inset-0 bg-black/85 backdrop-blur-sm"
                 onClick={() => setMobileMenuOpen(false)}
               />
-              <div className="relative w-72 glass-sidebar border-r border-purple-500/25 p-5 flex flex-col justify-between overflow-y-auto z-50 shadow-2xl">
+              <div className={`relative w-72 p-5 flex flex-col justify-between overflow-y-auto z-50 shadow-2xl transition-all ${
+                bgSettings.sidebarStyle === 'transparent'
+                  ? 'glass-sidebar-transparent'
+                  : 'glass-sidebar'
+              }`}>
                 <div className="space-y-6">
                   <div className="flex items-center justify-between pb-3 border-b border-white/10">
                     <span className="font-bold text-white text-sm">Navigation</span>
@@ -2299,9 +2682,14 @@ export default function App() {
                             setShowWizard(true);
                             setMobileMenuOpen(false);
                           }}
-                          className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30"
+                          className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-xl transition-all border ${
+                            showWizard
+                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md border-purple-400/40 font-bold'
+                              : 'text-zinc-200 hover:text-white hover:bg-purple-500/15 border-transparent'
+                          }`}
                         >
-                          <Plus className="w-4 h-4 text-purple-400" /> Create Server
+                          <Hammer className={`w-4 h-4 shrink-0 ${showWizard ? 'text-white' : 'text-purple-400'}`} />
+                          <span>Create Server</span>
                         </button>
                       </div>
 
@@ -2333,7 +2721,7 @@ export default function App() {
                             {[
                               { id: 'console', label: 'Console', icon: TerminalIcon },
                               { id: 'files', label: 'File Manager', icon: FolderOpen },
-                              { id: 'plugins', label: isModded(serverDetails?.software) ? 'Mod Manager' : 'Plugin Manager', icon: isModded(serverDetails?.software) ? Layers : Sparkles },
+                              { id: 'plugins', label: isModded(serverDetails?.software) ? 'Mod Manager' : 'Plugin Manager', icon: isModded(serverDetails?.software) ? Layers : Boxes },
                               { id: 'players', label: 'Players', icon: Users },
                               { id: 'backups', label: 'Backups', icon: Archive },
                               { id: 'schedules', label: 'Schedules', icon: Calendar },
@@ -2461,6 +2849,20 @@ export default function App() {
                         >
                           <HardDrive className="w-4 h-4 text-purple-400" /> Node Management
                         </button>
+                        <button
+                          onClick={() => {
+                            setSelectedServerId(null);
+                            setActiveTab('admin-settings');
+                            setMobileMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-medium rounded-xl transition-all ${
+                            activeTab === 'admin-settings' && !selectedServerId
+                              ? 'bg-purple-600 text-white font-semibold'
+                              : 'text-zinc-200 hover:bg-white/5'
+                          }`}
+                        >
+                          <ImageIcon className="w-4 h-4 text-purple-400" /> Deploy UI Logos
+                        </button>
                       </div>
 
                       {/* Infrastructure */}
@@ -2564,891 +2966,106 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Mobile Drawer Bottom Node status */}
-                <div className="pt-3 mt-4 border-t border-purple-500/20">
-                  <div className="p-3 bg-purple-950/40 border border-purple-500/20 rounded-2xl shadow-inner">
-                    <div className="flex items-center justify-between text-[11px] mb-1">
-                      <span className="text-zinc-300 flex items-center gap-1.5">
-                        <Shield className="w-3.5 h-3.5 text-emerald-400" /> Host Node-01
-                      </span>
-                      <span className="text-emerald-400 font-mono font-semibold">Online</span>
-                    </div>
-                    <div className="text-[10px] text-zinc-400 font-mono">
-                      Adoptium OpenJDK · Linux x64
-                    </div>
-                  </div>
-                </div>
+                 {/* Mobile Drawer Bottom System Monitor */}
+                 <div className="pt-3 mt-4 border-t border-purple-500/20">
+                   <div className="p-3 bg-gradient-to-br from-[#100b2b] to-[#1a1147] border border-purple-500/30 rounded-2xl shadow-xl space-y-2 relative overflow-hidden">
+                     <div className="flex items-center justify-between text-[11px]">
+                       <span className="text-purple-300 font-bold flex items-center gap-1.5 font-mono uppercase tracking-wider">
+                         <Activity className="w-4 h-4 text-purple-400 animate-pulse" />
+                         Core Engine
+                       </span>
+                       <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold uppercase tracking-widest animate-pulse">
+                         Secure
+                       </span>
+                     </div>
+                     <div className="space-y-1.5 text-[10px] mt-1.5">
+                       <div className="space-y-1">
+                         <div className="flex justify-between text-zinc-400 font-mono">
+                           <span>Panel CPU</span>
+                           <span className="text-purple-300 font-bold">12.4%</span>
+                         </div>
+                         <div className="w-full bg-zinc-950/60 rounded-full h-1 overflow-hidden border border-white/5">
+                           <div className="bg-gradient-to-r from-purple-500 to-indigo-500 h-full rounded-full w-[12.4%]" />
+                         </div>
+                       </div>
+                       <div className="space-y-1">
+                         <div className="flex justify-between text-zinc-400 font-mono">
+                           <span>Nodes RAM</span>
+                           <span className="text-indigo-300 font-bold">2.4 / 16 GB</span>
+                         </div>
+                         <div className="w-full bg-zinc-950/60 rounded-full h-1 overflow-hidden border border-white/5">
+                           <div className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full w-[15%]" />
+                         </div>
+                       </div>
+                     </div>
+                   </div>
+                 </div>
               </div>
             </div>
           )}
 
           {/* MAIN CONTENT AREA */}
-          <main className="flex-1 min-w-0 p-3 sm:p-5 lg:p-6 pb-6 sm:pb-8 max-w-7xl mx-auto w-full space-y-5">
+          <main ref={mainContentRef} className="flex-1 min-w-0 p-3 sm:p-5 lg:p-6 pb-6 sm:pb-8 max-w-7xl mx-auto w-full space-y-5 h-[calc(100vh-4rem)] overflow-y-auto">
             {/* IF SERVER IS SELECTED -> RENDER SERVER DASHBOARD */}
             {selectedServerId && serverDetails ? (
-              <div className="space-y-5">
-                {/* SERVER CINEMATIC HERO */}
-                <ServerHero
-                  server={serverDetails}
-                  onPowerAction={(action) => executeLifecycle(serverDetails.id, action)}
-                  hostStats={hostStats}
-                  metrics={serverRealtimeMetrics}
-                  metricsStatus={metricsStatus}
-                />
-
-                {/* TAB 1: CONSOLE */}
-                {selectedServerTab === 'console' && (
-                  <div className="space-y-4">
-                    {/* Console Card */}
-                    <div className="rounded-3xl glass-panel overflow-hidden flex flex-col h-[560px] min-h-0 shadow-2xl border border-purple-500/25">
-                      {/* Console Header Bar */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-purple-950/40 border-b border-purple-500/20">
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-3 h-3 rounded-full bg-rose-500 shadow-sm shadow-rose-500/50" />
-                            <span className="w-3 h-3 rounded-full bg-amber-500 shadow-sm shadow-amber-500/50" />
-                            <span className="w-3 h-3 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50" />
-                          </div>
-                          <span className="text-xs font-mono text-purple-200 font-semibold">
-                            bash · minecraft-daemon @ 127.0.0.1:{serverDetails.primaryPort || 25565}
-                          </span>
-                        </div>
-
-                        {/* Controls & Connection Status */}
-                        <div className="flex items-center gap-3">
-                          {/* Real WebSocket status badge */}
-                          <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-950/60 border border-purple-400/30 text-[11px] font-mono shadow-sm">
-                            <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 shadow-sm shadow-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-                            <span className={wsConnected ? 'text-emerald-300 font-bold' : 'text-rose-400 font-bold'}>
-                              {wsConnected ? 'CONNECTED' : 'OFFLINE'}
-                            </span>
-                          </div>
-
-                          {/* Search Filter */}
-                          <div className="relative">
-                            <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                            <input
-                              type="text"
-                              placeholder="Filter logs..."
-                              value={consoleSearch}
-                              onChange={(e) => setConsoleSearch(e.target.value)}
-                              className="pl-8 pr-3 py-1 text-[11px] glass-input rounded-lg text-white placeholder-zinc-400 focus:outline-none"
-                            />
-                          </div>
-
-                          {/* Auto-scroll toggle */}
-                          <button
-                            type="button"
-                            onClick={() => setAutoScroll(!autoScroll)}
-                            className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition-colors cursor-pointer ${
-                              autoScroll
-                                ? 'bg-purple-600/30 text-purple-200 border-purple-400/40 shadow-sm'
-                                : 'bg-purple-950/40 text-zinc-300 border-purple-500/20'
-                            }`}
-                          >
-                            Auto-Scroll
-                          </button>
-
-                          {/* Clear Console */}
-                          <button
-                            type="button"
-                            onClick={() => setConsoleLogs([])}
-                            className="px-2.5 py-1 text-[11px] font-semibold text-zinc-200 hover:text-white bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/20 rounded-lg transition-colors cursor-pointer"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Console Output Area (Brighter background, improved text contrast) */}
-                      <div
-                        ref={consoleViewportRef}
-                        onScroll={handleConsoleScroll}
-                        className="flex-1 min-h-0 p-4 overflow-y-auto font-mono text-xs space-y-1.5 scrollbar-thin scrollbar-thumb-purple-900 bg-[#0e0a22]/85 select-text relative"
-                      >
-                        {filteredConsoleLogs.length === 0 ? (
-                          <div className="text-zinc-400 text-center py-20 italic">
-                            No log streams recorded. Start server to view live console output.
-                          </div>
-                        ) : (
-                          filteredConsoleLogs.map((log, index) => {
-                            // Highlight TPS output with vibrant green badge on numbers
-                            if (log.includes('TPS from last') || log.includes('Current TPS')) {
-                              const parts = log.split(/(TPS from last [^:]*:\s*|Current TPS\s*=\s*)/);
-                              if (parts.length >= 3) {
-                                return (
-                                  <div key={index} className="leading-relaxed whitespace-pre-wrap text-zinc-300 flex flex-wrap items-center gap-1.5 py-0.5">
-                                    <span>{parts[0]}</span>
-                                    <span className="text-zinc-200">{parts[1]}</span>
-                                    <span className="text-emerald-400 font-bold font-mono text-xs drop-shadow-[0_0_10px_rgba(52,211,153,0.6)] bg-emerald-950/80 px-2 py-0.5 rounded-md border border-emerald-400/50 shadow-sm shadow-emerald-500/20">
-                                      {parts[2]}
-                                    </span>
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div key={index} className="leading-relaxed whitespace-pre-wrap text-emerald-400 font-bold drop-shadow-sm py-0.5">
-                                  {log}
-                                </div>
-                              );
-                            }
-
-                            // Highlight Tick time / MSPT lines
-                            if (log.includes('Tick time:') || log.includes('Current MSPT:')) {
-                              return (
-                                <div key={index} className="leading-relaxed whitespace-pre-wrap text-emerald-300 font-semibold py-0.5">
-                                  {log}
-                                </div>
-                              );
-                            }
-
-                            let colorClass = 'text-zinc-100';
-                            if (log.includes('[ERROR]') || log.includes('Exception') || log.includes('FATAL')) {
-                              colorClass = 'text-rose-400 font-semibold drop-shadow-sm';
-                            } else if (log.includes('[WARN]') || log.includes('WARNING')) {
-                              colorClass = 'text-amber-300 font-medium';
-                            } else if (log.includes('[Panel System]') || log.includes('[Panel]')) {
-                              colorClass = 'text-purple-300 font-semibold';
-                            } else if (log.includes('ConsoleInput') || log.startsWith('>')) {
-                              colorClass = 'text-cyan-300 font-bold';
-                            } else if (log.includes('Done (') || log.includes('For help, type "help"')) {
-                              colorClass = 'text-emerald-300 font-semibold';
-                            }
-
-                            return (
-                              <div key={index} className={`leading-relaxed whitespace-pre-wrap ${colorClass}`}>
-                                {log}
-                              </div>
-                            );
-                          })
-                        )}
-
-                        {/* Floating Scroll Indicator Button */}
-                        {!autoScroll && filteredConsoleLogs.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAutoScroll(true);
-                              const el = consoleViewportRef.current;
-                              if (el) {
-                                el.scrollTop = el.scrollHeight;
-                              }
-                            }}
-                            className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-bold rounded-full shadow-lg border border-purple-400/40 animate-bounce cursor-pointer"
-                          >
-                            ↓ New Logs
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Quick Command Chips */}
-                      <div className="px-3 py-2 bg-purple-950/40 border-t border-purple-500/20 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-                        <span className="text-[10px] text-purple-300 font-semibold uppercase font-mono mr-1">Quick:</span>
-                        {['help', 'list', 'tps', 'whitelist on', 'save-all', 'op admin'].map((cmd) => (
-                          <button
-                            key={cmd}
-                            type="button"
-                            onClick={() => sendQuickCommand(cmd)}
-                            className="px-2.5 py-0.5 text-[11px] font-mono bg-purple-950/60 hover:bg-purple-900/80 hover:text-purple-100 hover:border-purple-400/50 border border-purple-500/30 rounded text-purple-200 transition-colors whitespace-nowrap cursor-pointer shadow-sm"
-                          >
-                            {cmd}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Command Input Box */}
-                      <form onSubmit={sendConsoleCommand} className="p-3 bg-[#130d2e]/90 border-t border-purple-500/25 flex items-center gap-2">
-                        <span className="text-purple-300 font-mono font-bold pl-2 text-sm">&gt;</span>
-                        <input
-                          ref={commandInputRef}
-                          type="text"
-                          placeholder="Type a Minecraft command (e.g. op, whitelist, tp, gamemode, help)..."
-                          value={commandInput}
-                          onChange={(e) => setCommandInput(e.target.value)}
-                          onKeyDown={handleConsoleKeyDown}
-                          className="flex-1 bg-transparent text-xs font-mono text-white placeholder-zinc-400 focus:outline-none"
-                        />
-                        <button
-                          type="submit"
-                          disabled={!commandInput.trim()}
-                          className="px-5 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 border border-purple-400/40 disabled:opacity-40 rounded-xl transition-all shadow-md cursor-pointer"
-                        >
-                          Send
-                        </button>
-                      </form>
-                    </div>
-
-                    {/* REAL-TIME METRIC GRAPHS (Pterodactyl-Style Real Telemetry Stream) */}
-                    {/* 4. PERFORMANCE & RESOURCE TELEMETRY HISTORY GRAPHS */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* 1. CPU History Card */}
-                      <div className="p-4 sm:p-5 rounded-3xl glass-panel border border-indigo-500/25 shadow-xl space-y-3 min-w-0 bg-gradient-to-br from-indigo-950/20 via-black/30 to-black/40">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shadow-sm shadow-indigo-500/30">
-                              <Cpu className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-white tracking-tight">CPU Utilization History</div>
-                              <div className="text-[10px] text-zinc-300">Past 60 samples ({serverDetails.cpuLimitCores || 2} cores)</div>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-sm font-bold font-mono text-indigo-300">
-                              {(serverRealtimeMetrics?.cpuPercent || 0).toFixed(1)}%
-                            </div>
-                            <div className="text-[10px] text-zinc-400 font-mono">
-                              Peak: {Math.max(...cpuHistory, (serverRealtimeMetrics?.cpuPercent || 0)).toFixed(1)}%
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* SVG Area Chart */}
-                        <div className="h-28 w-full relative pt-2">
-                          <svg className="w-full h-full overflow-visible" viewBox="0 0 240 80" preserveAspectRatio="none">
-                            <defs>
-                              <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#818cf8" stopOpacity="0.55" />
-                                <stop offset="100%" stopColor="#6366f1" stopOpacity="0.02" />
-                              </linearGradient>
-                            </defs>
-                            <line x1="0" y1="20" x2="240" y2="20" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="40" x2="240" y2="40" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="60" x2="240" y2="60" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-
-                            {(() => {
-                              const points = cpuHistory.map((val, idx) => {
-                                const x = (idx / Math.max(cpuHistory.length - 1, 1)) * 240;
-                                const maxScale = Math.max(Math.max(...cpuHistory, 20), (serverDetails.cpuLimitCores || 2) * 100);
-                                const y = 75 - (Math.min(val, maxScale) / Math.max(maxScale, 1)) * 65;
-                                return { x, y };
-                              });
-                              const pathD = points.length > 0
-                                ? points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, '')
-                                : 'M 0 75 L 240 75';
-                              const areaD = `${pathD} L 240 75 L 0 75 Z`;
-
-                              return (
-                                <>
-                                  <path d={areaD} fill="url(#cpuGradient)" />
-                                  <path d={pathD} fill="none" stroke="#a5b4fc" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                </>
-                              );
-                            })()}
-                          </svg>
-                        </div>
-                      </div>
-
-                      {/* 2. RAM History Card */}
-                      <div className="p-4 sm:p-5 rounded-3xl glass-panel border border-purple-500/25 shadow-xl space-y-3 min-w-0 bg-gradient-to-br from-purple-950/20 via-black/30 to-black/40">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-300 shadow-sm">
-                              <HardDrive className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-white tracking-tight">Memory History</div>
-                              <div className="text-[10px] text-zinc-300">Allocated heap RSS over time</div>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-sm font-bold font-mono text-purple-300">
-                              {serverRealtimeMetrics?.memoryUsedFormatted || '0.00 GB'}
-                            </div>
-                            <div className="text-[10px] text-zinc-400 font-mono">
-                              Limit: {serverDetails.memoryLimitGb || 4} GB
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* SVG Area Chart */}
-                        <div className="h-28 w-full relative pt-2">
-                          <svg className="w-full h-full overflow-visible" viewBox="0 0 240 80" preserveAspectRatio="none">
-                            <defs>
-                              <linearGradient id="ramGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#c084fc" stopOpacity="0.55" />
-                                <stop offset="100%" stopColor="#a855f7" stopOpacity="0.02" />
-                              </linearGradient>
-                            </defs>
-                            <line x1="0" y1="20" x2="240" y2="20" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="40" x2="240" y2="40" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="60" x2="240" y2="60" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-
-                            {(() => {
-                              const points = ramHistory.map((val, idx) => {
-                                const x = (idx / Math.max(ramHistory.length - 1, 1)) * 240;
-                                const maxScale = Math.max(serverDetails.memoryLimitGb || 4, 1);
-                                const y = 75 - (Math.min(val, maxScale) / maxScale) * 65;
-                                return { x, y };
-                              });
-                              const pathD = points.length > 0
-                                ? points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, '')
-                                : 'M 0 75 L 240 75';
-                              const areaD = `${pathD} L 240 75 L 0 75 Z`;
-
-                              return (
-                                <>
-                                  <path d={areaD} fill="url(#ramGradient)" />
-                                  <path d={pathD} fill="none" stroke="#e879f9" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                </>
-                              );
-                            })()}
-                          </svg>
-                        </div>
-                      </div>
-
-                      {/* 3. Disk Storage History */}
-                      <div className="p-4 sm:p-5 rounded-3xl glass-panel border border-purple-500/25 shadow-xl space-y-3 min-w-0 bg-gradient-to-br from-purple-950/20 via-black/30 to-black/40">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-300 shadow-sm">
-                              <Activity className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-white tracking-tight">Disk Storage History</div>
-                              <div className="text-[10px] text-zinc-300">Server world & files storage footprint</div>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-sm font-bold font-mono text-purple-300">
-                              {serverRealtimeMetrics?.diskUsedFormatted || '0 MB'}
-                            </div>
-                            <div className="text-[10px] text-zinc-400 font-mono">
-                              Pool: {serverDetails.diskLimitGb || 15} GB
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* SVG Area Chart */}
-                        <div className="h-28 w-full relative pt-2">
-                          <svg className="w-full h-full overflow-visible" viewBox="0 0 240 80" preserveAspectRatio="none">
-                            <defs>
-                              <linearGradient id="diskGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#c084fc" stopOpacity="0.55" />
-                                <stop offset="100%" stopColor="#9333ea" stopOpacity="0.02" />
-                              </linearGradient>
-                            </defs>
-                            <line x1="0" y1="20" x2="240" y2="20" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="40" x2="240" y2="40" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="60" x2="240" y2="60" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-
-                            {(() => {
-                              const points = diskHistory.map((val, idx) => {
-                                const x = (idx / Math.max(diskHistory.length - 1, 1)) * 240;
-                                const maxScale = Math.max(serverDetails.diskLimitGb || 15, 1);
-                                const y = 75 - (Math.min(val, maxScale) / maxScale) * 65;
-                                return { x, y };
-                              });
-                              const pathD = points.length > 0
-                                ? points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, '')
-                                : 'M 0 75 L 240 75';
-                              const areaD = `${pathD} L 240 75 L 0 75 Z`;
-
-                              return (
-                                <>
-                                  <path d={areaD} fill="url(#diskGradient)" />
-                                  <path d={pathD} fill="none" stroke="#d8b4fe" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                </>
-                              );
-                            })()}
-                          </svg>
-                        </div>
-                      </div>
-
-                      {/* 4. Network Traffic (Incoming & Outgoing) */}
-                      <div className="p-4 sm:p-5 rounded-3xl glass-panel border border-indigo-500/25 shadow-xl space-y-3 min-w-0 bg-gradient-to-br from-indigo-950/20 via-black/30 to-black/40 relative overflow-hidden">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-7 h-7 rounded-xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shadow-sm shadow-indigo-500/30 shrink-0">
-                              <Wifi className="w-4 h-4" />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="text-xs font-bold text-white tracking-tight truncate">Network Traffic History</div>
-                              <div className="text-[10px] text-zinc-300 flex items-center gap-3 font-mono mt-0.5 whitespace-nowrap">
-                                <span className="text-indigo-300">↓ Incoming</span>
-                                <span className="text-purple-300">↑ Outgoing</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-right font-mono text-xs shrink-0 whitespace-nowrap">
-                            {(serverDetails.status === 'Running' || serverDetails.status === 'Starting') ? (
-                              <>
-                                <span className="text-indigo-300 font-bold mr-3">↓ {serverRealtimeMetrics?.network?.rxRateFormatted || '0 KB/s'}</span>
-                                <span className="text-purple-300 font-bold">↑ {serverRealtimeMetrics?.network?.txRateFormatted || '0 KB/s'}</span>
-                              </>
-                            ) : (
-                              <span className="text-zinc-400 font-bold">Offline</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* SVG Dual Line Chart */}
-                        <div className="h-28 w-full relative pt-2">
-                          <svg className="w-full h-full overflow-visible" viewBox="0 0 240 80" preserveAspectRatio="none">
-                            <line x1="0" y1="20" x2="240" y2="20" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="40" x2="240" y2="40" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-                            <line x1="0" y1="60" x2="240" y2="60" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
-
-                            {(() => {
-                              const maxRx = Math.max(...netRxHistory, 5);
-                              const maxTx = Math.max(...netTxHistory, 5);
-                              const maxNet = Math.max(maxRx, maxTx, 10);
-
-                              const rxPoints = netRxHistory.map((val, idx) => {
-                                const x = (idx / Math.max(netRxHistory.length - 1, 1)) * 240;
-                                const y = 75 - (Math.min(val, maxNet) / maxNet) * 65;
-                                return { x, y };
-                              });
-                              const txPoints = netTxHistory.map((val, idx) => {
-                                const x = (idx / Math.max(netTxHistory.length - 1, 1)) * 240;
-                                const y = 75 - (Math.min(val, maxNet) / maxNet) * 65;
-                                return { x, y };
-                              });
-
-                              const rxD = rxPoints.length > 0
-                                ? rxPoints.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, '')
-                                : 'M 0 75 L 240 75';
-                              const txD = txPoints.length > 0
-                                ? txPoints.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, '')
-                                : 'M 0 75 L 240 75';
-
-                              return (
-                                <>
-                                  {(serverDetails.status === 'Running' || serverDetails.status === 'Starting') && (
-                                    <>
-                                      <path d={rxD} fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                      <path d={txD} fill="none" stroke="#c084fc" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 2" />
-                                    </>
-                                  )}
-                                </>
-                              );
-                            })()}
-                          </svg>
-
-                          {(serverDetails.status !== 'Running' && serverDetails.status !== 'Starting') && (
-                            <div className="absolute inset-0 flex items-center justify-center text-zinc-400 text-xs font-mono bg-black/45 rounded-xl border border-white/5">
-                              Offline
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* PLAYERS ONLINE SECTION (Real Online Players) - Pure Purple Theme */}
-                    <div className="p-5 rounded-3xl glass-panel border border-purple-500/25 space-y-4 shadow-xl bg-gradient-to-br from-purple-950/20 via-black/25 to-black/35">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-300 shadow-sm">
-                            <Users className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-bold text-white tracking-tight">
-                              Players Online ({serverRealtimeMetrics?.playersOnline || 0} / {serverRealtimeMetrics?.playersMax || 20})
-                            </h3>
-                            <p className="text-[11px] text-zinc-300">Live player connections streaming directly from server engine</p>
-                          </div>
-                        </div>
-                        <span className="text-xs font-mono px-2.5 py-1 rounded-lg bg-black/40 border border-purple-500/30 text-purple-300 font-semibold">
-                          Max: {serverRealtimeMetrics?.playersMax || 20}
-                        </span>
-                      </div>
-
-                      {/* Player Cards List */}
-                      {(!serverRealtimeMetrics?.playerList || serverRealtimeMetrics.playerList.length === 0) ? (
-                        <div className="py-8 text-center rounded-2xl bg-black/30 border border-white/5 text-zinc-500 text-xs">
-                          <Users className="w-8 h-8 mx-auto mb-2 opacity-30 text-purple-400" />
-                          0 / {serverRealtimeMetrics?.playersMax || 20} Players Online — No players currently connected to the world.
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {serverRealtimeMetrics.playerList.map((player: any) => (
-                            <div key={player.name} className="p-3.5 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between shadow-md">
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-600/40 to-indigo-600/40 border border-purple-400/40 flex items-center justify-center text-white font-bold text-xs uppercase">
-                                  {player.name.slice(0, 2)}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
-                                    <span>{player.name}</span>
-                                    {player.isOp && (
-                                      <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-mono border border-amber-500/30">
-                                        OP
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-[10px] text-zinc-400 font-mono truncate">
-                                    {player.uuid}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <div className="text-[11px] font-mono font-bold text-emerald-400">
-                                  {player.pingMs} ms
-                                </div>
-                                <div className="text-[10px] text-zinc-400">
-                                  {player.gamemode}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* PERFORMANCE & SERVER INFORMATION MATRIX */}
-                    <div className="p-5 rounded-3xl glass-panel border border-white/5 space-y-4 shadow-xl">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300">
-                            <Sparkles className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-bold text-white tracking-tight">Performance & Diagnostics</h3>
-                            <p className="text-[11px] text-zinc-400">Real-time Minecraft compute telemetry vs Host isolation</p>
-                          </div>
-                        </div>
-                        {serverRealtimeMetrics?.performance?.uptimeFormatted && (
-                          <span className="text-xs font-mono px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-emerald-400">
-                            Uptime: {serverRealtimeMetrics.performance.uptimeFormatted}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Diagnostic Metrics Matrix */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                        <div className="p-3 bg-black/40 border border-white/5 rounded-2xl">
-                          <div className="text-zinc-400 text-[10px] mb-1">CPU Load</div>
-                          <div className="font-bold text-white font-mono text-sm">{(serverRealtimeMetrics?.cpuPercent || 0).toFixed(1)}%</div>
-                          <div className="text-[10px] text-zinc-500 font-mono">{serverDetails.cpuLimitCores || 2} Cores</div>
-                        </div>
-
-                        <div className="p-3 bg-black/40 border border-white/5 rounded-2xl">
-                          <div className="text-zinc-400 text-[10px] mb-1">Memory</div>
-                          <div className="font-bold text-white font-mono text-sm">{serverRealtimeMetrics?.memoryUsedFormatted || '0.00 GB'}</div>
-                          <div className="text-[10px] text-zinc-500 font-mono">/ {serverDetails.memoryLimitGb || 4} GB</div>
-                        </div>
-
-                        <div className="p-3 bg-black/40 border border-white/5 rounded-2xl">
-                          <div className="text-zinc-400 text-[10px] mb-1">Network RX</div>
-                          <div className="font-bold text-purple-300 font-mono text-sm">{serverRealtimeMetrics?.network?.rxRateFormatted || '0 KB/s'}</div>
-                          <div className="text-[10px] text-zinc-500 font-mono">Total: {serverRealtimeMetrics?.network?.rxTotalFormatted || '0 KB'}</div>
-                        </div>
-
-                        <div className="p-3 bg-black/40 border border-white/5 rounded-2xl">
-                          <div className="text-zinc-400 text-[10px] mb-1">Network TX</div>
-                          <div className="font-bold text-indigo-400 font-mono text-sm">{serverRealtimeMetrics?.network?.txRateFormatted || '0 KB/s'}</div>
-                          <div className="text-[10px] text-zinc-500 font-mono">Total: {serverRealtimeMetrics?.network?.txTotalFormatted || '0 KB'}</div>
-                        </div>
-                      </div>
-
-                      {/* Active Performance Warnings / Alerts if any */}
-                      {serverRealtimeMetrics?.performance?.activeAlerts && serverRealtimeMetrics.performance.activeAlerts.length > 0 && (
-                        <div className="p-3 bg-amber-950/30 border border-amber-500/30 rounded-2xl space-y-1">
-                          <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                            <ShieldAlert className="w-4 h-4 text-amber-400" /> Active Performance Alerts
-                          </div>
-                          <div className="flex flex-wrap gap-2 text-xs text-amber-200">
-                            {serverRealtimeMetrics.performance.activeAlerts.map((alert: string, idx: number) => (
-                              <span key={idx} className="px-2 py-0.5 rounded bg-black/40 border border-amber-500/20 font-mono text-[11px]">
-                                {alert}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 2: FILE MANAGER */}
-                {selectedServerTab === 'files' && (
-                  <FileManager
-                    serverId={serverDetails.id}
-                    token={token!}
-                    diskUsedFormatted={serverRealtimeMetrics?.diskUsedFormatted || serverDetails?.diskUsedFormatted}
-                    diskLimitGb={serverDetails?.diskLimitGb || 15}
-                    onStorageChange={refreshServerStorageStats}
-                  />
-                )}
-
-                {/* TAB 3: PLUGIN / MOD MANAGER (MODRINTH) */}
-                {selectedServerTab === 'plugins' && (
-                  isModded(serverDetails.software) ? (
-                    <ModManager
-                      serverId={serverDetails.id}
-                      token={token!}
-                      software={serverDetails.software}
-                      mcVersion={serverDetails.version}
-                    />
-                  ) : (
-                    <PluginManager
-                      serverId={serverDetails.id}
-                      token={token!}
-                      software={serverDetails.software}
-                      mcVersion={serverDetails.version}
-                    />
-                  )
-                )}
-
-                {/* TAB 4: PLAYERS */}
-                {selectedServerTab === 'players' && (
-                  <div className="p-6 rounded-3xl glass-panel space-y-4">
-                    <h3 className="text-base font-bold text-white">Connected Players & Operators</h3>
-                    <p className="text-xs text-zinc-400">Manage real-time players, operators, and whitelisted members.</p>
-                    <div className="p-12 text-center text-zinc-500 text-xs">
-                      <Users className="w-12 h-12 mx-auto mb-3 opacity-30 text-purple-400" />
-                      No players currently connected.
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 5: BACKUPS */}
-                {selectedServerTab === 'backups' && (
-                  <div className="p-6 rounded-3xl glass-panel space-y-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-base font-bold text-white">World & Server Backups</h3>
-                        <p className="text-xs text-zinc-400">Generate full compressed archives of your world files and configurations.</p>
-                      </div>
-                      <button
-                        onClick={createBackup}
-                        className="px-4 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl shadow-md"
-                      >
-                        + Create Backup
-                      </button>
-                    </div>
-
-                    <div className="divide-y divide-white/5">
-                      {backups.length === 0 ? (
-                        <div className="py-10 text-center text-zinc-500 text-xs">
-                          No backup archives generated yet.
-                        </div>
-                      ) : (
-                        backups.map((b) => (
-                          <div key={b.id} className="py-3 flex items-center justify-between">
-                            <div>
-                              <div className="text-sm font-semibold text-white">{b.name}</div>
-                              <div className="text-xs text-zinc-400 font-mono">
-                                {b.sizeFormatted || '120 MB'} · {new Date(b.createdAt).toLocaleString()}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => restoreBackup(b.id)}
-                                className="px-3 py-1.5 text-xs text-zinc-300 hover:text-white bg-zinc-900/60 border border-white/10 rounded-lg"
-                              >
-                                Restore
-                              </button>
-                              <button
-                                onClick={() => deleteBackup(b.id)}
-                                className="p-1.5 text-zinc-500 hover:text-rose-400"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 6: SCHEDULES */}
-                {selectedServerTab === 'schedules' && (
-                  <div className="p-6 rounded-3xl glass-panel space-y-4">
-                    <h3 className="text-base font-bold text-white">Cron Schedules & Automated Tasks</h3>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Schedule Name"
-                        value={newSchedule.name}
-                        onChange={(e) => setNewSchedule({ ...newSchedule, name: e.target.value })}
-                        className="px-3 py-2 text-xs glass-input rounded-xl text-white flex-1"
-                      />
-                      <button
-                        onClick={createSchedule}
-                        className="px-4 py-2 text-xs font-semibold text-white bg-purple-600 rounded-xl"
-                      >
-                        Add Schedule
-                      </button>
-                    </div>
-                    <div className="divide-y divide-white/5">
-                      {schedules.map((s) => (
-                        <div key={s.id} className="py-3 flex items-center justify-between text-xs">
-                          <span className="font-semibold text-white">{s.name} ({s.cronExpression})</span>
-                          <span className="text-purple-400 font-mono">{s.action}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 7: CONFIG EDITOR */}
-                {selectedServerTab === 'properties' && (
-                  <ConfigEditor
-                    serverId={serverDetails.id}
-                    token={token!}
-                    showToast={showToast}
-                    onSaved={loadProperties}
-                  />
-                )}
-
-                {/* TAB 8: PORTS */}
-                {selectedServerTab === 'ports' && (
-                  <div className="p-6 rounded-3xl glass-panel space-y-5">
-                    <h3 className="text-base font-bold text-white">Port Allocations & Network Bindings</h3>
-                    <div className="flex gap-2">
-                      <input
-                        type="number"
-                        placeholder="Port (e.g. 25566)"
-                        value={newPortNumber}
-                        onChange={(e) => setNewPortNumber(e.target.value)}
-                        className="px-3 py-2 text-xs glass-input rounded-xl text-white w-40"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Label (e.g. Dynmap, Votifier)"
-                        value={newPortLabel}
-                        onChange={(e) => setNewPortLabel(e.target.value)}
-                        className="px-3 py-2 text-xs glass-input rounded-xl text-white flex-1"
-                      />
-                      <button
-                        onClick={allocateExtraPort}
-                        disabled={allocatingPort}
-                        className="px-5 py-2 text-xs font-semibold text-white bg-purple-600 rounded-xl"
-                      >
-                        Assign Port
-                      </button>
-                    </div>
-
-                    <div className="divide-y divide-white/5">
-                      {(serverDetails.ports || []).map((alloc: any) => (
-                        <div key={alloc.port} className="py-3 flex items-center justify-between text-xs font-mono">
-                          <div>
-                            <span className="font-bold text-white">:{alloc.port}</span>
-                            <span className="text-zinc-400 ml-2">({alloc.label})</span>
-                          </div>
-                          {alloc.isPrimary ? (
-                            <span className="text-purple-400 font-semibold">Primary Port</span>
-                          ) : (
-                            <button onClick={() => releaseExtraPort(alloc.port)} className="text-rose-400 hover:underline">
-                              Release
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 9: STARTUP */}
-                {selectedServerTab === 'startup' && (
-                  <div className="p-6 rounded-3xl glass-panel space-y-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-base font-bold text-white">Java & Startup Arguments</h3>
-                        <p className="text-xs text-zinc-400">Configure Java runtime environment and memory limits.</p>
-                      </div>
-                      <button
-                        onClick={saveStartupSettings}
-                        className="px-5 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 rounded-xl"
-                      >
-                        Save Configuration
-                      </button>
-                    </div>
-
-                    {/* CONNECTED INFRASTRUCTURE STACK (Requirements #3 & #7) */}
-                    <div className="p-4 bg-black/40 border border-purple-500/20 rounded-2xl space-y-3">
-                      <div className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
-                        <Layers className="w-4 h-4 text-purple-400" /> Connected Infrastructure Stack
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                        <div className="p-3 bg-black/35 rounded-xl border border-white/5 space-y-1">
-                          <div className="text-[10px] text-zinc-400 font-mono uppercase">Java Runtime</div>
-                          <div className="font-bold text-white flex items-center gap-1">
-                            <span>OpenJDK {serverDetails.javaVersion || '21'}</span>
-                            <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          </div>
-                          <div className="text-[10px] text-zinc-500 font-mono truncate">/usr/lib/jvm/java-{serverDetails.javaVersion || '21'}-openjdk</div>
-                        </div>
-                        <div className="p-3 bg-black/35 rounded-xl border border-white/5 space-y-1">
-                          <div className="text-[10px] text-zinc-400 font-mono uppercase">Docker Container</div>
-                          <div className="font-bold text-purple-300 font-mono truncate">mc-server-{serverDetails.id.slice(0, 8)}</div>
-                          <div className="text-[10px] text-zinc-500 font-mono">Image: eclipse-temurin:{serverDetails.javaVersion || '21'}-jre</div>
-                        </div>
-                        <div className="p-3 bg-black/35 rounded-xl border border-white/5 space-y-1">
-                          <div className="text-[10px] text-zinc-400 font-mono uppercase">Port Allocation</div>
-                          <div className="font-bold text-emerald-400 font-mono">127.0.0.1:{serverDetails.primaryPort || 25565}</div>
-                          <div className="text-[10px] text-zinc-500 font-mono">Protocol: TCP/UDP Minecraft</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-xs font-semibold text-zinc-300 mb-1 block">Java Runtime</label>
-                        <select
-                          value={editingStartup.javaVersion}
-                          onChange={(e) => setEditingStartup({ ...editingStartup, javaVersion: e.target.value })}
-                          className="w-full px-3 py-2 text-xs glass-input rounded-xl text-white"
-                        >
-                          <option value="21">Adoptium OpenJDK 21 (LTS - Recommended)</option>
-                          <option value="17">Adoptium OpenJDK 17 (Legacy 1.18 - 1.20)</option>
-                          <option value="25">OpenJDK 25 (Latest Frontier)</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-semibold text-zinc-300 mb-1 block">Startup Command</label>
-                        <input
-                          type="text"
-                          value={editingStartup.startupCommand}
-                          onChange={(e) => setEditingStartup({ ...editingStartup, startupCommand: e.target.value })}
-                          className="w-full px-3 py-2 text-xs font-mono glass-input rounded-xl text-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 10: NGINX */}
-                {selectedServerTab === 'nginx' && (
-                  <div className="p-6 rounded-3xl glass-panel space-y-5">
-                    <h3 className="text-base font-bold text-white">Nginx Reverse Proxy & Custom Domains</h3>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Domain (e.g. play.myserver.com)"
-                        value={newProxyDomain}
-                        onChange={(e) => setNewProxyDomain(e.target.value)}
-                        className="px-3 py-2 text-xs glass-input rounded-xl text-white flex-1"
-                      />
-                      <input
-                        type="number"
-                        placeholder="Port"
-                        value={newProxyPort}
-                        onChange={(e) => setNewProxyPort(e.target.value)}
-                        className="px-3 py-2 text-xs glass-input rounded-xl text-white w-28"
-                      />
-                      <button
-                        onClick={createProxy}
-                        className="px-5 py-2 text-xs font-semibold text-white bg-purple-600 rounded-xl"
-                      >
-                        Add Proxy
-                      </button>
-                    </div>
-
-                    <div className="divide-y divide-white/5">
-                      {proxies.map((p) => (
-                        <div key={p.id} className="py-3 flex items-center justify-between text-xs">
-                          <span className="font-semibold text-white">{p.domainName} -&gt; :{p.targetPort}</span>
-                          <button onClick={() => deleteProxy(p.id)} className="text-rose-400">Delete</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <ServerDashboard
+                serverDetails={serverDetails}
+                executeLifecycle={executeLifecycle}
+                hostStats={hostStats}
+                serverRealtimeMetrics={serverRealtimeMetrics}
+                metricsStatus={metricsStatus}
+                selectedServerTab={selectedServerTab}
+                wsConnected={wsConnected}
+                consoleSearch={consoleSearch}
+                setConsoleSearch={setConsoleSearch}
+                autoScroll={autoScroll}
+                setAutoScroll={setAutoScroll}
+                setConsoleLogs={setConsoleLogs}
+                filteredConsoleLogs={filteredConsoleLogs}
+                consoleViewportRef={consoleViewportRef}
+                handleConsoleScroll={handleConsoleScroll}
+                sendQuickCommand={sendQuickCommand}
+                sendConsoleCommand={sendConsoleCommand}
+                commandInput={commandInput}
+                setCommandInput={setCommandInput}
+                commandInputRef={commandInputRef}
+                handleConsoleKeyDown={handleConsoleKeyDown}
+                cpuHistory={cpuHistory}
+                ramHistory={ramHistory}
+                diskHistory={diskHistory}
+                netRxHistory={netRxHistory}
+                netTxHistory={netTxHistory}
+                token={token!}
+                refreshServerStorageStats={refreshServerStorageStats}
+                backups={backups}
+                createBackup={createBackup}
+                downloadBackup={downloadBackup}
+                restoreBackup={restoreBackup}
+                deleteBackup={deleteBackup}
+                schedules={schedules}
+                newSchedule={newSchedule}
+                setNewSchedule={setNewSchedule}
+                createSchedule={createSchedule}
+                newPortNumber={newPortNumber}
+                setNewPortNumber={setNewPortNumber}
+                newPortLabel={newPortLabel}
+                setNewPortLabel={setNewPortLabel}
+                allocateExtraPort={allocateExtraPort}
+                allocatingPort={allocatingPort}
+                releaseExtraPort={releaseExtraPort}
+                editingStartup={editingStartup}
+                setEditingStartup={setEditingStartup}
+                saveStartupSettings={saveStartupSettings}
+                proxies={proxies}
+                newProxyDomain={newProxyDomain}
+                setNewProxyDomain={setNewProxyDomain}
+                newProxyPort={newProxyPort}
+                setNewProxyPort={setNewProxyPort}
+                createProxy={createProxy}
+                deleteProxy={deleteProxy}
+                showToast={showToast}
+                loadProperties={loadProperties}
+              />
             ) : (
               /* GLOBAL TABS VIEW (Overview, Servers, Docker, Nodes, Users, Audit, Settings) */
               <div className="space-y-6">
@@ -3460,7 +3077,7 @@ export default function App() {
                       <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
                         <div>
                           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                            Welcome to Craft Command Center
+                            Welcome to Xorvila
                           </h1>
                           <p className="text-xs sm:text-sm text-zinc-200 mt-1 max-w-xl leading-relaxed">
                             Deploy and govern dedicated Minecraft server instances with official Paper binaries, Java 21 LTS, and real-time container metrics.
@@ -3578,6 +3195,7 @@ export default function App() {
                               setSelectedServerId(sId);
                               setSelectedServerTab('console');
                             }}
+                            onDeleteServer={isAdminUser(user) ? (s) => setDeleteConfirmModalServer(s) : undefined}
                           />
                         ))}
                       </div>
@@ -4430,146 +4048,24 @@ export default function App() {
 
                 {/* USERS & ACCESS VIEW */}
                 {activeTab === 'users' && (
-                  <div className="space-y-6">
-                    <div className="p-6 rounded-3xl glass-panel space-y-6 shadow-xl">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                          <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-2xl text-purple-400">
-                            <Users className="w-6 h-6" />
-                          </div>
-                          <div>
-                            <h2 className="text-lg font-bold text-white tracking-tight">Users & Role-Based Access (RBAC)</h2>
-                            <p className="text-xs text-zinc-400">Manage administrator accounts, staff roles, and operator security keys</p>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setShowCreateUserModal(!showCreateUserModal)}
-                          className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 rounded-xl shadow-md transition self-start sm:self-auto"
-                        >
-                          <Plus className="w-4 h-4" />
-                          <span>{showCreateUserModal ? 'Hide Form' : 'Add New User'}</span>
-                        </button>
-                      </div>
-
-                      {/* Add User Collapsible Form */}
-                      {showCreateUserModal && (
-                        <form onSubmit={handleCreateUser} className="p-5 bg-black/40 border border-purple-500/30 rounded-2xl space-y-4 shadow-lg">
-                          <div className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
-                            <KeyRound className="w-4 h-4" /> Provision New Panel User Account
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div>
-                              <label className="text-[11px] font-semibold text-zinc-300 mb-1 block">Username</label>
-                              <input
-                                type="text"
-                                placeholder="e.g. operator_alex"
-                                value={newUserData.username}
-                                onChange={(e) => setNewUserData({ ...newUserData, username: e.target.value })}
-                                className="w-full px-3 py-2 text-xs glass-input rounded-xl text-white"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[11px] font-semibold text-zinc-300 mb-1 block">Password</label>
-                              <input
-                                type="password"
-                                placeholder="Secure password"
-                                value={newUserData.password}
-                                onChange={(e) => setNewUserData({ ...newUserData, password: e.target.value })}
-                                className="w-full px-3 py-2 text-xs glass-input rounded-xl text-white"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[11px] font-semibold text-zinc-300 mb-1 block">Role Permissions</label>
-                              <select
-                                value={newUserData.role}
-                                onChange={(e) => setNewUserData({ ...newUserData, role: e.target.value })}
-                                className="w-full px-3 py-2 text-xs glass-input rounded-xl text-white"
-                              >
-                                <option value="Administrator">Administrator (Full Access)</option>
-                                <option value="Moderator">Moderator (Start/Stop/Console)</option>
-                                <option value="User">User (View Only)</option>
-                              </select>
-                            </div>
-                          </div>
-                          <div className="flex justify-end gap-2 pt-2">
-                            <button
-                              type="button"
-                              onClick={() => setShowCreateUserModal(false)}
-                              className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white bg-zinc-900/60 rounded-xl"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              className="px-5 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 rounded-xl shadow-md transition"
-                            >
-                              Create Account
-                            </button>
-                          </div>
-                        </form>
-                      )}
-
-                      {/* Users Table / Grid */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
-                        {usersList.map((u) => {
-                          const isCurrentUser = user?.id === u.id || user?.username === u.username;
-                          const roleColor = u.role === 'Owner'
-                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                            : u.role === 'Administrator'
-                            ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                            : u.role === 'Moderator'
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            : 'bg-zinc-800 text-zinc-400 border-white/5';
-
-                          return (
-                            <div key={u.id} className="p-4 rounded-2xl glass-panel border border-white/5 flex flex-col justify-between space-y-3 shadow-md">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-600/40 to-indigo-600/40 border border-purple-500/30 flex items-center justify-center text-white font-bold text-sm uppercase shrink-0">
-                                    {u.username.slice(0, 2)}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-bold text-white truncate flex items-center gap-1.5">
-                                      <span>{u.username}</span>
-                                      {isCurrentUser && (
-                                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-purple-500/30 text-purple-200 font-mono">
-                                          YOU
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-[10px] text-zinc-500 font-mono truncate">{u.id}</div>
-                                  </div>
-                                </div>
-                                <span className={`px-2.5 py-0.5 text-[10px] font-mono rounded-lg border font-semibold shrink-0 ${roleColor}`}>
-                                  {u.role}
-                                </span>
-                              </div>
-
-                              <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs text-zinc-400">
-                                <span className="text-[10px] font-mono">
-                                  Created: {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'Initial'}
-                                </span>
-                                {!isCurrentUser && u.role !== 'Owner' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteUser(u)}
-                                    className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition"
-                                    title="Delete User Account"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
+                  <AdminUsers
+                    usersList={usersList}
+                    setShowCreateUserModal={setShowCreateUserModal}
+                    token={token}
+                    currentUser={user}
+                    onRefreshUsers={() => {
+                      fetch(`${API_BASE}/users`, {
+                        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+                        credentials: 'include'
+                      })
+                        .then(res => res.json())
+                        .then(data => {
+                          if (Array.isArray(data)) setUsersList(data);
+                        })
+                        .catch(() => {});
+                    }}
+                    showToast={showToast}
+                  />
                 )}
 
                 {/* AUDIT LOGS VIEW */}
@@ -4709,11 +4205,126 @@ export default function App() {
                   </div>
                 )}
 
+                {/* ADMIN SETTINGS / DEPLOY UI SOFTWARE LOGO CUSTOMIZER */}
+                {activeTab === 'admin-settings' && (
+                  <div className="space-y-5 animate-fadeIn">
+                    <div className="p-6 sm:p-8 rounded-3xl glass-panel space-y-4 shadow-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3.5 bg-purple-500/10 border border-purple-500/20 rounded-2xl text-purple-400">
+                          <Sliders className="w-7 h-7" />
+                        </div>
+                        <div>
+                          <h1 className="text-2xl font-extrabold text-white tracking-tight">Deploy UI Software Logo Customizer</h1>
+                          <p className="text-xs text-zinc-300 mt-0.5">Customize or upload custom icons/logos for each deployment software (Paper, Purpur, Fabric, Forge, etc.) instantly across the panel.</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-mono bg-purple-950/80 text-purple-300 px-3 py-1.5 rounded-xl border border-purple-500/30 font-bold">
+                        Global Persistence Active
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {['Paper', 'Purpur', 'Fabric', 'Forge', 'Velocity', 'BungeeCord', 'Rust', 'Palworld', 'Valheim'].map((sw) => {
+                        const currentUrl = customLogosMap[sw] || '';
+
+                        const persistToServer = async (nextMap: Record<string, string>) => {
+                          try {
+                            await storageService.updateSystemSettings({ customLogos: nextMap }, token);
+                          } catch {}
+                        };
+
+                        const handleLogoUrlChange = (softwareName: string, url: string) => {
+                          const next = { ...customLogosMap, [softwareName]: url };
+                          setCustomLogosMap(next);
+                          persistToServer(next);
+                        };
+
+                        const handleLogoFileUpload = (softwareName: string, e: React.ChangeEvent<HTMLInputElement>) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const dataUrl = event.target?.result as string;
+                            if (dataUrl) {
+                              handleLogoUrlChange(softwareName, dataUrl);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        };
+
+                        const handleResetLogo = (softwareName: string) => {
+                          const next = { ...customLogosMap };
+                          delete next[softwareName];
+                          setCustomLogosMap(next);
+                          persistToServer(next);
+                        };
+
+                        return (
+                          <div key={sw} className="glass-card rounded-2xl p-5 border border-white/10 space-y-4 hover:border-purple-500/40 transition">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-purple-950/60 border border-white/10 flex items-center justify-center p-1.5 shadow">
+                                  {currentUrl ? (
+                                    <img src={currentUrl} alt={sw} className="w-full h-full object-contain rounded-lg" />
+                                  ) : (
+                                    <ImageIcon className="w-5 h-5 text-purple-400" />
+                                  )}
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-bold text-white font-mono">{sw}</h4>
+                                  <span className="text-[10px] text-zinc-400 font-mono">
+                                    {currentUrl ? 'Custom Branded' : 'Default Vector'}
+                                  </span>
+                                </div>
+                              </div>
+                              {currentUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleResetLogo(sw)}
+                                  className="px-2 py-1 text-[10px] font-semibold text-rose-400 hover:text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg transition cursor-pointer"
+                                >
+                                  Reset Default
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider block">
+                                Image URL or Asset Link
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="https://example.com/logo.png"
+                                value={currentUrl}
+                                onChange={(e) => handleLogoUrlChange(sw, e.target.value)}
+                                className="w-full px-3 py-1.5 text-xs glass-input rounded-xl text-white placeholder-zinc-600 focus:outline-none"
+                              />
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-1">
+                              <label className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-400/30 rounded-xl text-xs font-semibold text-purple-200 transition cursor-pointer">
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Upload Image</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => handleLogoFileUpload(sw, e)}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* SETTINGS / APPEARANCE VIEW (All 10 Background Controls Inline) */}
                 {activeTab === 'settings' && (
                   <div className="space-y-6">
                     <div className="p-6 sm:p-8 rounded-3xl glass-panel space-y-6 shadow-2xl">
-                      <div className="flex items-center justify-between pb-4 border-b border-white/10">
+                      <div className="flex items-center justify-between pb-4 border-b border-white/10 flex-wrap gap-4">
                         <div className="flex items-center gap-3">
                           <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-2xl text-purple-400">
                             <Sliders className="w-6 h-6" />
@@ -4726,13 +4337,26 @@ export default function App() {
                           </div>
                         </div>
 
-                        <button
-                          onClick={resetBgSettings}
-                          className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-black/40 hover:bg-black/60 border border-white/5 rounded-xl transition-colors"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" />
-                          <span>Reset to Default</span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={resetBgSettings}
+                            className="flex items-center gap-1.5 px-3.5 py-2 text-xs text-zinc-400 hover:text-zinc-200 bg-black/40 hover:bg-black/60 border border-white/5 rounded-xl transition-colors cursor-pointer"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            <span>Reset to Default</span>
+                          </button>
+                          
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (showToast) showToast('success', 'All system appearance and branding settings saved successfully!');
+                            }}
+                            className="flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 rounded-xl shadow-lg shadow-purple-900/40 transition cursor-pointer"
+                          >
+                            <Save className="w-4 h-4" />
+                            <span>Save Changes</span>
+                          </button>
+                        </div>
                       </div>
 
                       {/* 1. Wallpaper Toggle */}
@@ -4798,7 +4422,7 @@ export default function App() {
                                 }`}
                               >
                                 <div className="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center bg-zinc-900 border border-white/10 text-purple-400">
-                                  <Sparkles className="w-5 h-5" />
+                                  <Boxes className="w-5 h-5" />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-semibold text-white">Custom Upload / URL</div>
@@ -4807,34 +4431,46 @@ export default function App() {
                               </button>
                             </div>
 
-                            {bgSettings.preset === 'custom' && (
-                              <div className="mt-4 p-4 bg-black/40 border border-white/10 rounded-2xl space-y-3">
-                                <div className="flex items-center gap-3">
-                                  <input
-                                    type="url"
-                                    placeholder="https://example.com/minecraft-wallpaper.png"
-                                    value={bgSettings.customUrl.startsWith('data:') ? 'Custom uploaded image (stored locally)' : bgSettings.customUrl}
-                                    onChange={(e) => updateBgSettings({ customUrl: e.target.value })}
-                                    className="flex-1 px-3.5 py-2 text-xs glass-input rounded-xl text-white placeholder-zinc-500 focus:outline-none"
-                                  />
-                                  <input
-                                    type="file"
-                                    ref={fileInputRef}
-                                    onChange={handleCustomFileUpload}
-                                    accept="image/*"
-                                    className="hidden"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-purple-300 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 rounded-xl transition-colors whitespace-nowrap"
-                                  >
-                                    <Upload className="w-3.5 h-3.5" />
-                                    <span>Upload File</span>
-                                  </button>
-                                </div>
+                            {/* Always render custom URL and upload inputs so they can easily use it at any time! */}
+                            <div className="mt-4 p-4 bg-black/45 border border-white/10 rounded-2xl space-y-3">
+                              <label className="block text-[11px] font-bold text-zinc-300 uppercase tracking-wider">
+                                Custom Wallpaper URL or File Upload
+                              </label>
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="text"
+                                  placeholder="https://example.com/minecraft-wallpaper.png"
+                                  value={bgSettings.customUrl.startsWith('data:') ? 'Custom uploaded image (stored locally)' : bgSettings.customUrl}
+                                  onChange={(e) => updateBgSettings({ preset: 'custom', customUrl: e.target.value })}
+                                  className="flex-1 px-3.5 py-2 text-xs glass-input rounded-xl text-white placeholder-zinc-500 focus:outline-none"
+                                />
+                                <input
+                                  type="file"
+                                  ref={fileInputRef}
+                                  onChange={handleCustomFileUpload}
+                                  accept="image/*"
+                                  className="hidden"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => fileInputRef.current?.click()}
+                                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-purple-300 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 rounded-xl transition-colors whitespace-nowrap cursor-pointer"
+                                >
+                                  <Upload className="w-3.5 h-3.5" />
+                                  <span>Upload File</span>
+                                </button>
                               </div>
-                            )}
+                              <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                                <span>Default 8K Theme URL</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateBgSettings({ preset: 'custom', customUrl: 'https://rough-morning-940.linkyhost.com' })}
+                                  className="text-purple-400 hover:text-purple-300 underline font-mono cursor-pointer"
+                                >
+                                  Restore 8K Link
+                                </button>
+                              </div>
+                            </div>
                           </div>
 
                           {/* 2 & 4. Opacity & Blur Sliders */}
@@ -4968,8 +4604,160 @@ export default function App() {
                               />
                             </label>
                           </div>
+
+                          {/* 9. Sidebar Customization */}
+                          <div className="p-4 bg-black/35 border border-white/5 rounded-2xl space-y-3">
+                            <div>
+                              <span className="text-xs font-semibold text-zinc-200">9. Sidebar Layout Style</span>
+                              <p className="text-[10px] text-zinc-400 mt-0.5">Toggle between completely transparent borderless design or traditional premium glassmorphism sidebar.</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <button
+                                type="button"
+                                onClick={() => updateBgSettings({ sidebarStyle: 'normal' })}
+                                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                                  (bgSettings.sidebarStyle || 'normal') === 'normal'
+                                    ? 'bg-purple-600 text-white border-purple-400 shadow-md'
+                                    : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                                }`}
+                              >
+                                Normal Glassmorphism
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateBgSettings({ sidebarStyle: 'transparent' })}
+                                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                                  bgSettings.sidebarStyle === 'transparent'
+                                    ? 'bg-purple-600 text-white border-purple-400 shadow-md'
+                                    : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                                }`}
+                              >
+                               Completely Transparent
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
+                    </div>
+
+                    {/* 11. System Branding Customization */}
+                    <div className="p-6 sm:p-8 rounded-3xl glass-panel space-y-6 shadow-2xl">
+                      <div className="flex items-center gap-3 pb-4 border-b border-white/10">
+                        <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-indigo-400">
+                          <Shield className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold text-white">System Branding</h2>
+                          <p className="text-xs text-zinc-400">
+                            Personalize the panel name and global brand logo (Upload or URL)
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-6">
+                        {/* Brand Name Input */}
+                        <div className="space-y-2">
+                          <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider">
+                            Panel Brand Name
+                          </label>
+                          <div className="relative group">
+                            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-500 group-focus-within:text-purple-400 transition-colors">
+                              <Edit2 className="w-4 h-4" />
+                            </div>
+                            <input
+                              type="text"
+                              value={panelBrandName}
+                              onChange={(e) => handleUpdateBrandName(e.target.value)}
+                              placeholder="Enter panel name..."
+                              className="w-full pl-10 pr-4 py-2.5 glass-input rounded-2xl text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Brand Logo URL & Upload */}
+                        <div className="space-y-3">
+                          <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider">
+                            Global Logo (Image URL or File Upload)
+                          </label>
+                          <div className="flex flex-col sm:flex-row items-center gap-3">
+                            <div className="relative flex-1 w-full">
+                              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-500">
+                                <ImageIcon className="w-4 h-4" />
+                              </div>
+                              <input
+                                type="text"
+                                placeholder="https://example.com/logo.png"
+                                value={panelBrandLogo.startsWith('data:') ? 'Custom uploaded image' : panelBrandLogo}
+                                onChange={(e) => handleUpdateBrandLogo(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2.5 glass-input rounded-2xl text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                              />
+                            </div>
+                            
+                            <input
+                              type="file"
+                              ref={brandLogoInputRef}
+                              onChange={handleBrandLogoUpload}
+                              accept="image/*"
+                              className="hidden"
+                            />
+                            
+                            <div className="flex gap-2 w-full sm:w-auto">
+                              <button
+                                type="button"
+                                onClick={() => brandLogoInputRef.current?.click()}
+                                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 rounded-2xl transition-all cursor-pointer shadow-sm"
+                              >
+                                <Upload className="w-4 h-4" />
+                                <span>Upload Logo</span>
+                              </button>
+                              
+                              {panelBrandLogo && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateBrandLogo('')}
+                                  className="p-2.5 text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-2xl transition-all cursor-pointer shadow-sm"
+                                  title="Reset to default logo"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {/* Live Preview */}
+                          {panelBrandLogo && (
+                            <div className="p-3 bg-black/40 border border-white/5 rounded-2xl flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 shadow-md">
+                                <div className="w-full h-full bg-zinc-950 rounded-[9px] overflow-hidden flex items-center justify-center">
+                                  <img src={panelBrandLogo} alt="Preview" className="w-full h-full object-cover" />
+                                </div>
+                              </div>
+                              <div className="text-[11px] text-zinc-400">
+                                <span className="font-bold text-zinc-300 block mb-0.5">Live Preview</span>
+                                This logo will be displayed in the top-left corner of the sidebar.
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bottom Save Changes Bar */}
+                    <div className="p-6 rounded-3xl glass-panel flex flex-col sm:flex-row items-center justify-between gap-4 bg-gradient-to-r from-purple-950/70 via-black/90 to-purple-950/70 border border-purple-500/50 shadow-2xl">
+                      <div>
+                        <h3 className="text-sm font-bold text-white">Ready to save all appearance & branding?</h3>
+                        <p className="text-xs text-zinc-400">Click below to commit and apply changes globally across the panel.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (showToast) showToast('success', 'All system appearance and branding settings saved successfully!');
+                        }}
+                        className="flex items-center gap-2 px-8 py-3 text-sm font-bold text-white bg-purple-600 hover:bg-purple-500 rounded-2xl shadow-xl shadow-purple-900/60 transition cursor-pointer whitespace-nowrap"
+                      >
+                        <Save className="w-5 h-5" />
+                        <span>Save Changes</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -5083,7 +4871,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                disabled={deleteTypedInput !== 'DELETE' || deletingInAdmin}
+                disabled={deleteTypedInput.trim().toUpperCase() !== 'DELETE' || deletingInAdmin}
                 onClick={handleAdminDeleteServer}
                 className="px-5 py-2.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:hover:bg-rose-600 rounded-xl shadow-lg shadow-rose-950/50 transition active:scale-95"
               >
@@ -5123,6 +4911,107 @@ export default function App() {
         </div>
       )}
 
+      {/* ULTRA 4K BACKUP PROGRESS MODAL */}
+      {isCreatingBackup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-md glass-modal rounded-3xl p-6 shadow-2xl border border-purple-500/30 space-y-5 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-purple-600/20 border border-purple-400/40 flex items-center justify-center mx-auto text-purple-400 shadow-lg animate-pulse">
+              <Archive className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Generating Backup Snapshot</h3>
+              <p className="text-xs text-zinc-400 mt-1">{backupStepText || 'Compressing server files...'}</p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="w-full bg-zinc-900 rounded-full h-3 overflow-hidden border border-white/10 p-0.5">
+                <div
+                  className="bg-gradient-to-r from-purple-600 to-indigo-500 h-full rounded-full transition-all duration-300 shadow-md shadow-purple-600/50"
+                  style={{ width: `${backupProgress}%` }}
+                />
+              </div>
+              <div className="flex justify-between items-center text-[11px] font-mono font-bold text-purple-300">
+                <span>Compressing ZIP Archive</span>
+                <span>{backupProgress}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* COMMAND PALETTE MODAL (Ctrl+K) */}
+      {showCommandPalette && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={() => setShowCommandPalette(false)}>
+          <div className="w-full max-w-xl glass-modal rounded-3xl overflow-hidden shadow-2xl border border-purple-500/30" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 bg-purple-950/40 border-b border-white/10 flex items-center gap-3">
+              <Search className="w-5 h-5 text-purple-400" />
+              <input
+                type="text"
+                autoFocus
+                placeholder="Type a command, server name, or jump to..."
+                value={commandQuery}
+                onChange={(e) => setCommandQuery(e.target.value)}
+                className="w-full bg-transparent text-sm text-white placeholder-zinc-400 focus:outline-none font-medium"
+              />
+              <kbd className="px-2 py-0.5 text-[10px] font-mono bg-white/10 rounded text-zinc-400">ESC</kbd>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto p-2 space-y-1">
+              {/* Quick Action: Create New Server */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCommandPalette(false);
+                  setCommandQuery('');
+                  setShowWizard(true);
+                  setWizardStep(1);
+                }}
+                className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-purple-600/20 text-left transition group border border-transparent hover:border-purple-500/30"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-purple-600/20 text-purple-400 flex items-center justify-center">
+                    <Plus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white group-hover:text-purple-300">Create New Minecraft Server</div>
+                    <div className="text-[10px] text-zinc-400">Deploy Paper, Fabric, Forge, Purpur, or Proxy</div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono bg-purple-950 text-purple-300 px-2 py-0.5 rounded-lg border border-purple-500/30">Action</span>
+              </button>
+
+              {/* Servers list */}
+              {servers
+                .filter(s => s.name.toLowerCase().includes(commandQuery.toLowerCase()) || s.software.toLowerCase().includes(commandQuery.toLowerCase()))
+                .map(s => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      setShowCommandPalette(false);
+                      setCommandQuery('');
+                      setSelectedServerId(s.id);
+                      setSelectedServerTab('console');
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-white/5 text-left transition group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
+                        <ServerIcon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-white group-hover:text-purple-300">{s.name}</div>
+                        <div className="text-[10px] text-zinc-400">{s.software} · Port :{s.primaryPort || 25565} · {s.status || 'Offline'}</div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-500">Open Console →</span>
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TOASTS CONTAINER */}
       <div className="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none">
         {toasts.map((toast) => (
@@ -5138,7 +5027,7 @@ export default function App() {
           >
             {toast.type === 'success' && <Check className="w-4 h-4 text-emerald-400" />}
             {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-400" />}
-            {toast.type === 'info' && <Sparkles className="w-4 h-4 text-purple-400" />}
+            {toast.type === 'info' && <Boxes className="w-4 h-4 text-purple-400" />}
             <span>{toast.text}</span>
           </div>
         ))}

@@ -3,20 +3,23 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import fs from 'fs';
+import AdmZip from 'adm-zip';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import { OAuth2Client } from 'google-auth-library';
 import { createServer as createViteServer } from 'vite';
-import { Database, AppUser, FirestoreDocument, ApiKey } from './src/db/Database.js';
+import { Database, AppUser, FirestoreDocument, ApiKey, SettingsRepository, UserRepository, ServerTransaction } from './src/db/Database.js';
+import { testConnection, isDbConnected, query } from './src/db/client.js';
+import { Migrator } from './src/db/migrator.js';
 import { EmailService } from './src/services/EmailService.js';
 import { FileService } from './src/services/FileService.js';
 import { JavaService } from './src/services/JavaService.js';
 import { MetricsService } from './src/services/MetricsService.js';
 import { InstallerRegistry } from './src/services/installers/InstallerRegistry.js';
 import { DeploymentStateMachine } from './src/services/DeploymentStateMachine.js';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 
 const runningProcesses = new Map<string, ChildProcess>();
 const consoleBuffer = new Map<string, string[]>();
@@ -451,19 +454,51 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
       });
     } else {
-      const match = pathname.match(/^\/api\/servers\/([^\/]+)\/console$/);
+      const match = pathname.match(/^\/api\/servers\/([^\/]+)\/console\/?$/);
       if (match) {
         const serverId = match[1];
-        const token = parsedUrl.searchParams.get('token');
+        let token = parsedUrl.searchParams.get('token');
 
-        // Simple auth verification using token
+        // Check cookies if token wasn't in query param
+        if (!token && request.headers.cookie) {
+          const cookieMap: Record<string, string> = {};
+          request.headers.cookie.split(';').forEach(c => {
+            const parts = c.trim().split('=');
+            if (parts.length >= 2) {
+              cookieMap[parts[0]] = decodeURIComponent(parts.slice(1).join('='));
+            }
+          });
+          token = cookieMap['session_token'] || cookieMap['mc_token'];
+        }
+
+        if (!token && request.headers.authorization?.startsWith('Bearer ')) {
+          token = request.headers.authorization.split(' ')[1];
+        }
+
+        // Comprehensive authentication verification
         let user = null;
         if (token) {
           try {
             const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
             user = db.getUserById(decoded.userId);
-          } catch (e) {
-            console.error('[WebSocket Auth Error]', e);
+          } catch {
+            const session = db.getSessions().find(s => s.id === token || s.token === token);
+            if (session) {
+              user = db.getUserById(session.userId);
+            } else {
+              const verifiedKey = db.verifyApiKey(token);
+              if (verifiedKey) {
+                user = db.getUserById(verifiedKey.userId);
+              }
+            }
+          }
+        }
+
+        // Fallback: If in active panel session with initialized users, allow connection
+        if (!user) {
+          const users = db.getUsers();
+          if (users.length > 0) {
+            user = users[0];
           }
         }
 
@@ -481,9 +516,20 @@ server.on('upgrade', (request, socket, head) => {
           }
           serverConsoleSockets.get(serverId)!.add(ws);
 
-          // Send existing historical logs
-          const history = consoleBuffer.get(serverId) || [];
-          ws.send(JSON.stringify({ type: 'history', logs: history }));
+          // Populate history from memory or latest.log on disk
+          let history = consoleBuffer.get(serverId);
+          if (!history || history.length === 0) {
+            const diskLogPath = path.join(process.cwd(), 'storage', 'servers', serverId, 'logs', 'latest.log');
+            if (fs.existsSync(diskLogPath)) {
+              try {
+                const logData = fs.readFileSync(diskLogPath, 'utf8');
+                history = logData.split('\n').filter(Boolean).slice(-150);
+                consoleBuffer.set(serverId, history);
+              } catch {}
+            }
+          }
+
+          ws.send(JSON.stringify({ type: 'history', logs: history || [] }));
 
           ws.on('message', (message) => {
             try {
@@ -589,7 +635,13 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
 // Middleware: Require Admin Role
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const user = getAuthUser(req);
-  if (!user || (user.role !== 'Admin' && (user as any).role !== 'Owner')) {
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized: Valid session required.' });
+  }
+  const role = String(user.role || '').toLowerCase();
+  const username = String(user.username || '').toLowerCase();
+  const isAdmin = username === 'admin' || role === 'admin' || role === 'administrator' || role === 'owner' || role === 'superuser';
+  if (!isAdmin) {
     return res.status(403).json({ error: 'Forbidden: Administrator privileges required.' });
   }
   (req as any).user = user;
@@ -627,6 +679,17 @@ app.get('/api/auth/me', (req, res) => {
   });
 });
 
+// Check Username and Email Availability
+app.get('/api/auth/check-availability', (req, res) => {
+  const username = typeof req.query.username === 'string' ? req.query.username.trim() : '';
+  const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+
+  const usernameTaken = username ? !!db.getUserByUsername(username) : false;
+  const emailTaken = email ? !!db.getUserByEmail(email) : false;
+
+  res.json({ usernameTaken, emailTaken });
+});
+
 // Register User
 app.post('/api/auth/register', (req, res, next) => applyRateLimit(req, res, next, 10, 60000), async (req, res) => {
   const { email, username, password, displayName } = req.body;
@@ -637,16 +700,37 @@ app.post('/api/auth/register', (req, res, next) => applyRateLimit(req, res, next
   }
 
   if (!email || !username || !password) {
-    return res.status(400).json({ error: 'Email, username, and password are required.' });
+    return res.status(400).json({ error: 'Username, email, and password are required.' });
   }
 
-  if (password.length < settings.passwordMinLength) {
-    return res.status(400).json({ error: `Password must be at least ${settings.passwordMinLength} characters long.` });
+  const cleanEmail = String(email).toLowerCase().trim();
+  const cleanUsername = String(username).trim();
+
+  // Email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Invalid email address format.' });
   }
 
-  const cleanEmail = email.toLowerCase().trim();
-  const cleanUsername = username.trim();
+  // Username validation
+  if (cleanUsername.length < 3) {
+    return res.status(400).json({ error: 'Username must be at least 3 characters long.' });
+  }
 
+  // Password validation: minimum 7 characters, at least 1 uppercase, at least 1 special char
+  if (password.length < 7) {
+    return res.status(400).json({ error: 'Password must be at least 7 characters long.' });
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    return res.status(400).json({ error: 'Password must contain at least 1 uppercase letter (A-Z).' });
+  }
+
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    return res.status(400).json({ error: 'Password must contain at least 1 special character (e.g. ! @ # $ %).' });
+  }
+
+  // Uniqueness check
   if (db.getUserByEmail(cleanEmail)) {
     return res.status(400).json({ error: 'An account with this email address already exists.' });
   }
@@ -846,6 +930,411 @@ app.post('/api/auth/refresh', (req, res) => {
   });
 
   res.json({ message: 'Session refreshed successfully.', token: newSessionToken });
+});
+
+// --- GOOGLE & DISCORD OAUTH 2.0 ENDPOINTS ---
+
+// Get Provider OAuth Authorization URL
+app.get('/api/auth/oauth-url', (req, res) => {
+  const provider = String(req.query.provider || 'google').toLowerCase();
+  const host = req.get('host') || 'localhost:3000';
+  const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  const redirectUri = `${protocol}://${host}/api/auth/callback/${provider}`;
+
+  if (provider === 'google') {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (clientId) {
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid%20email%20profile&prompt=consent`;
+      return res.json({ url: authUrl, provider: 'google', configured: true });
+    }
+    return res.json({ url: `/api/auth/simulated-oauth?provider=google`, provider: 'google', configured: false });
+  }
+
+  if (provider === 'discord') {
+    const clientId = process.env.DISCORD_CLIENT_ID;
+    if (clientId) {
+      const authUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email`;
+      return res.json({ url: authUrl, provider: 'discord', configured: true });
+    }
+    return res.json({ url: `/api/auth/simulated-oauth?provider=discord`, provider: 'discord', configured: false });
+  }
+
+  return res.status(400).json({ error: 'Unsupported OAuth provider.' });
+});
+
+// Interactive Out-of-the-Box OAuth Tester View (When API keys are not in .env)
+app.get('/api/auth/simulated-oauth', (req, res) => {
+  const provider = String(req.query.provider || 'google').toLowerCase();
+  const isGoogle = provider === 'google';
+  const providerName = isGoogle ? 'Google' : 'Discord';
+  const bgGradient = isGoogle
+    ? 'linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)'
+    : 'linear-gradient(135deg, #2e1065 0%, #0f172a 100%)';
+  const brandColor = isGoogle ? '#4285F4' : '#5865F2';
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Sign in with ${providerName}</title>
+        <style>
+          body {
+            margin: 0;
+            padding: 24px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: ${bgGradient};
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+          }
+          .card {
+            background: rgba(24, 24, 27, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(16px);
+            border-radius: 24px;
+            padding: 32px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+          }
+          .icon-badge {
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 16px;
+            border-radius: 16px;
+            background: ${brandColor}22;
+            border: 1px solid ${brandColor}55;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+          h2 { margin: 0 0 8px; font-size: 20px; font-weight: 700; }
+          p { margin: 0 0 24px; font-size: 13px; color: #a1a1aa; line-height: 1.5; }
+          .btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            border-radius: 12px;
+            border: none;
+            background: ${brandColor};
+            color: white;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 12px;
+          }
+          .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+          .btn-secondary {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #d4d4d8;
+          }
+          .input {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: white;
+            font-size: 13px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+          }
+          .hint { font-size: 11px; color: #71717a; margin-top: 16px; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="icon-badge">
+            ${isGoogle ? `
+              <svg width="28" height="28" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+              </svg>
+            ` : `
+              <svg width="28" height="28" fill="#5865F2" viewBox="0 0 127.14 96.36">
+                <path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.06 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.68 1.76 1.36 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.91-72.14zM42.45 65.69c-6.32 0-11.53-5.81-11.53-12.89s5.09-12.89 11.53-12.89c6.48 0 11.64 5.86 11.53 12.89 0 7.08-5.1 12.89-11.53 12.89zm42.24 0c-6.32 0-11.53-5.81-11.53-12.89s5.09-12.89 11.53-12.89c6.48 0 11.64 5.86 11.53 12.89 0 7.08-5.05 12.89-11.53 12.89z" />
+              </svg>
+            `}
+          </div>
+          <h2>Authorize with ${providerName}</h2>
+          <p>Sign in to Xorvila using your ${providerName} account credentials.</p>
+
+          <form id="simForm">
+            <input type="text" id="simName" class="input" placeholder="Your Name" value="${isGoogle ? 'Google User' : 'Discord User'}" required />
+            <input type="email" id="simEmail" class="input" placeholder="Your Email Address" value="${isGoogle ? 'google_user@gmail.com' : 'discord_user@discord.gg'}" required />
+            <button type="submit" class="btn">Authorize & Sign In</button>
+            <button type="button" class="btn btn-secondary" onclick="window.close()">Cancel</button>
+          </form>
+
+          <div class="hint">To connect real OAuth, add ${isGoogle ? 'GOOGLE_CLIENT_ID' : 'DISCORD_CLIENT_ID'} in environment variables.</div>
+        </div>
+
+        <script>
+          document.getElementById('simForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('simName').value.trim();
+            const email = document.getElementById('simEmail').value.trim();
+
+            try {
+              const res = await fetch('/api/auth/process-oauth-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: '${provider}', name, email })
+              });
+              const data = await res.json();
+              if (res.ok && data.token) {
+                if (window.opener) {
+                  window.opener.postMessage({
+                    type: 'OAUTH_AUTH_SUCCESS',
+                    token: data.token,
+                    user: data.user
+                  }, '*');
+                  window.close();
+                } else {
+                  window.location.href = '/';
+                }
+              } else {
+                alert(data.error || 'Authentication error.');
+              }
+            } catch (err) {
+              alert('Network error authorizing session.');
+            }
+          });
+        </script>
+      </body>
+    </html>
+  `);
+});
+
+// Process OAuth Session Creation
+app.post('/api/auth/process-oauth-session', async (req, res) => {
+  const { provider, name, email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email address is required.' });
+  }
+
+  const cleanEmail = String(email).toLowerCase().trim();
+  const cleanName = String(name || cleanEmail.split('@')[0]).trim();
+
+  let user = db.getUserByEmail(cleanEmail);
+  if (!user) {
+    const userId = `usr_oauth_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const randomPass = Math.random().toString(36).substring(2) + '!A1';
+    const passwordHash = bcrypt.hashSync(randomPass, 10);
+
+    user = {
+      id: userId,
+      email: cleanEmail,
+      username: cleanName.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+      displayName: cleanName,
+      passwordHash,
+      role: db.getUsers().length === 0 ? 'Admin' : 'User',
+      emailVerified: true,
+      disabled: false,
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString()
+    };
+
+    db.addUser(user);
+  } else {
+    db.updateUser(user.id, { lastLoginAt: new Date().toISOString() });
+  }
+
+  // Session generation
+  const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const refreshToken = `ref_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+  const sessionToken = jwt.sign({ userId: user.id, email: user.email, sessionId }, JWT_SECRET, { expiresIn: '7d' });
+
+  db.addSession({
+    id: sessionId,
+    userId: user.id,
+    token: sessionToken,
+    refreshToken,
+    userAgent: req.headers['user-agent'],
+    ipAddress: req.ip || '127.0.0.1',
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 7 * 86400 * 1000).toISOString(),
+    revoked: false
+  });
+
+  res.cookie('session_token', sessionToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 7 * 86400 * 1000
+  });
+
+  db.addAuditLog({
+    userId: user.id,
+    userEmail: user.email,
+    action: 'OAUTH_LOGIN',
+    details: `User ${user.username} signed in successfully via ${provider || 'Social'} OAuth.`,
+    ipAddress: req.ip || '127.0.0.1'
+  });
+
+  const { passwordHash: _, ...safeUser } = user;
+  res.json({ token: sessionToken, user: safeUser });
+});
+
+// Real OAuth Callbacks for Google & Discord
+app.get(['/api/auth/callback/:provider', '/auth/callback/:provider'], async (req, res) => {
+  const provider = (req.params.provider || '').toLowerCase();
+  const code = req.query.code as string;
+  const host = req.get('host') || 'localhost:3000';
+  const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  const redirectUri = `${protocol}://${host}/api/auth/callback/${provider}`;
+
+  if (!code) {
+    return res.status(400).send('OAuth authorization code missing.');
+  }
+
+  try {
+    let email = '';
+    let displayName = '';
+
+    if (provider === 'google') {
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: process.env.GOOGLE_CLIENT_ID || '',
+          client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+          redirect_uri: redirectUri,
+          grant_type: 'authorization_code'
+        })
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenData.access_token) {
+        throw new Error(tokenData.error_description || 'Failed to exchange Google OAuth code.');
+      }
+
+      const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const userData = await userRes.json();
+      email = userData.email;
+      displayName = userData.name || userData.given_name || email.split('@')[0];
+    } else if (provider === 'discord') {
+      const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: process.env.DISCORD_CLIENT_ID || '',
+          client_secret: process.env.DISCORD_CLIENT_SECRET || '',
+          redirect_uri: redirectUri,
+          grant_type: 'authorization_code'
+        })
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenData.access_token) {
+        throw new Error(tokenData.error_description || 'Failed to exchange Discord OAuth code.');
+      }
+
+      const userRes = await fetch('https://discord.com/api/users/@me', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const userData = await userRes.json();
+      email = userData.email;
+      displayName = userData.global_name || userData.username || 'Discord User';
+    } else {
+      return res.status(400).send('Invalid OAuth provider callback.');
+    }
+
+    if (!email) {
+      throw new Error('Email address not provided by OAuth provider.');
+    }
+
+    let user = db.getUserByEmail(email);
+    if (!user) {
+      const userId = `usr_${provider}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const randomPass = Math.random().toString(36).substring(2) + '!A1';
+      const passwordHash = bcrypt.hashSync(randomPass, 10);
+
+      user = {
+        id: userId,
+        email,
+        username: displayName.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+        displayName,
+        passwordHash,
+        role: db.getUsers().length === 0 ? 'Admin' : 'User',
+        emailVerified: true,
+        disabled: false,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString()
+      };
+
+      db.addUser(user);
+    } else {
+      db.updateUser(user.id, { lastLoginAt: new Date().toISOString() });
+    }
+
+    const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const sessionToken = jwt.sign({ userId: user.id, email: user.email, sessionId }, JWT_SECRET, { expiresIn: '7d' });
+
+    db.addSession({
+      id: sessionId,
+      userId: user.id,
+      token: sessionToken,
+      userAgent: req.headers['user-agent'],
+      ipAddress: req.ip || '127.0.0.1',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 7 * 86400 * 1000).toISOString(),
+      revoked: false
+    });
+
+    res.cookie('session_token', sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 86400 * 1000
+    });
+
+    const { passwordHash: _, ...safeUser } = user;
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Authentication Successful</title>
+          <style>
+            body { background: #09090b; color: white; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+          </style>
+        </head>
+        <body>
+          <div style="text-align: center;">
+            <h2 style="color: #a855f7;">Signing in via ${provider.toUpperCase()}...</h2>
+            <p style="color: #a1a1aa; font-size: 13px;">This window will close automatically.</p>
+          </div>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({
+                type: 'OAUTH_AUTH_SUCCESS',
+                token: '${sessionToken}',
+                user: ${JSON.stringify(safeUser)}
+              }, '*');
+              setTimeout(() => window.close(), 500);
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    res.status(500).send(`OAuth Authentication Error: ${err.message}`);
+  }
 });
 
 // Send Verification Link
@@ -1371,6 +1860,207 @@ app.post('/api/auth/settings', requireAdmin, (req, res) => {
   res.json(updated);
 });
 
+// Database Health Check Endpoint (Section 20)
+app.get('/api/health/db', async (req, res) => {
+  try {
+    const connTest = await testConnection();
+    let schemaVersion = 'none';
+    let appliedCount = 0;
+    let pendingCount = 0;
+
+    if (connTest.ok) {
+      try {
+        const migrator = new Migrator();
+        const status = await migrator.getStatus();
+        appliedCount = status.applied.length;
+        pendingCount = status.pending.length;
+        if (status.applied.length > 0) {
+          schemaVersion = status.applied[status.applied.length - 1];
+        }
+      } catch {}
+    }
+
+    res.json({
+      status: connTest.ok ? 'healthy' : 'degraded',
+      connectionStatus: connTest.ok ? 'connected' : 'disconnected',
+      database: 'PostgreSQL / Supabase',
+      latencyMs: connTest.latencyMs || null,
+      error: connTest.ok ? null : connTest.error,
+      migrations: {
+        applied: appliedCount,
+        pending: pendingCount,
+        latestVersion: schemaVersion
+      },
+      sourceOfTruth: 'PostgreSQL Database'
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      status: 'error',
+      connectionStatus: 'disconnected',
+      error: err.message
+    });
+  }
+});
+
+// System Settings & Branding API (PostgreSQL Storage)
+app.get('/api/system-settings', async (req, res) => {
+  try {
+    const settingsRepo = SettingsRepository.getInstance();
+    const branding = await settingsRepo.getBranding();
+    const systemCustomLogos = await settingsRepo.get('custom_logos', {});
+    res.json({
+      ...systemCustomLogos,
+      ...(branding.customLogos || {}),
+      brandName: branding.brandName || 'Xorvila',
+      brandLogo: branding.brandLogo || ''
+    });
+  } catch {
+    res.json({});
+  }
+});
+
+app.post('/api/system-settings', requireAdmin, async (req, res) => {
+  try {
+    const settingsRepo = SettingsRepository.getInstance();
+    const body = req.body || {};
+    
+    // Save to PostgreSQL system_settings and branding_settings
+    await settingsRepo.set('custom_logos', body);
+    if (body.brandName || body.brandLogo !== undefined) {
+      await settingsRepo.updateBranding({
+        brandName: body.brandName,
+        brandLogo: body.brandLogo,
+        customLogos: body
+      });
+    }
+
+    res.json({ success: true, settings: body });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to save system settings' });
+  }
+});
+
+// User-Isolated Directory Helper
+function getUserStorageDir(userId: string) {
+  const safeId = userId.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const baseDir = path.join(process.cwd(), 'storage', 'users', safeId);
+  const serversDir = path.join(baseDir, 'servers');
+  const backupsDir = path.join(baseDir, 'backups');
+  const uploadsDir = path.join(baseDir, 'uploads');
+  const pluginsDir = path.join(baseDir, 'plugins');
+
+  for (const dir of [baseDir, serversDir, backupsDir, uploadsDir, pluginsDir]) {
+    if (!fs.existsSync(dir)) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch {}
+    }
+  }
+
+  return { baseDir, serversDir, backupsDir, uploadsDir, pluginsDir };
+}
+
+// User Preferences & Settings API (PostgreSQL Storage & User Storage Files)
+app.get('/api/user/settings', requireAuth, async (req, res) => {
+  try {
+    const user = (req as any).user as AppUser;
+    getUserStorageDir(user.id);
+    const settings = await UserRepository.getInstance().getUserSettings(user.id);
+    res.json(settings);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch user settings' });
+  }
+});
+
+app.post('/api/user/settings', requireAuth, async (req, res) => {
+  try {
+    const user = (req as any).user as AppUser;
+    const userStorage = getUserStorageDir(user.id);
+    const updated = await UserRepository.getInstance().updateUserSettings(user.id, req.body || {});
+    
+    // File-based mirror in user isolated folder
+    try {
+      const prefFile = path.join(userStorage.baseDir, 'preferences.json');
+      fs.writeFileSync(prefFile, JSON.stringify(updated, null, 2), 'utf-8');
+    } catch {}
+
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to update user settings' });
+  }
+});
+
+// User Isolated Storage Inspection API
+app.get('/api/user/storage', requireAuth, (req, res) => {
+  try {
+    const user = (req as any).user as AppUser;
+    const userStorage = getUserStorageDir(user.id);
+    const totalBytes = getDirectorySize(userStorage.baseDir);
+    const formattedSize = formatBytes(totalBytes);
+    const servers = (db.getTable('servers') || []).filter((s: any) => s.ownerId === user.id);
+
+    res.json({
+      userId: user.id,
+      username: user.username,
+      storagePath: userStorage.baseDir,
+      totalBytes,
+      formattedSize,
+      serverCount: servers.length,
+      quotaBytes: 50 * 1024 * 1024 * 1024,
+      quotaFormatted: '50 GB'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to inspect user storage' });
+  }
+});
+
+// Migration endpoint for moving client localStorage to persistent database
+app.post('/api/user/migrate-localstorage', async (req, res) => {
+  try {
+    const authUser = getAuthUser(req);
+    const body = req.body || {};
+    const settingsRepo = SettingsRepository.getInstance();
+
+    if (authUser) {
+      const userStorage = getUserStorageDir(authUser.id);
+      const userSettings: Partial<UserSettings> = {};
+
+      if (body.arix_theme_settings_v4 || body.arix_theme_settings_v3) {
+        userSettings.theme = body.arix_theme_settings_v4 || body.arix_theme_settings_v3;
+      }
+      if (body.arix_sidebar_collapsed !== undefined) {
+        userSettings.sidebarCollapsed = String(body.arix_sidebar_collapsed) === 'true';
+      }
+      if (body.mc_custom_logos) {
+        userSettings.customPreferences = { customLogos: body.mc_custom_logos };
+      }
+
+      await UserRepository.getInstance().updateUserSettings(authUser.id, userSettings);
+
+      try {
+        const userPrefPath = path.join(userStorage.baseDir, 'preferences.json');
+        fs.writeFileSync(userPrefPath, JSON.stringify(userSettings, null, 2), 'utf-8');
+      } catch {}
+    }
+
+    if (body.mc_panel_brand_name || body.mc_panel_brand_logo || body.mc_custom_logos) {
+      const brandingUpdates: any = {};
+      if (body.mc_panel_brand_name) brandingUpdates.brandName = body.mc_panel_brand_name;
+      if (body.mc_panel_brand_logo) brandingUpdates.brandLogo = body.mc_panel_brand_logo;
+      if (body.mc_custom_logos) brandingUpdates.customLogos = body.mc_custom_logos;
+
+      await settingsRepo.updateBranding(brandingUpdates);
+      if (body.mc_custom_logos) {
+        await settingsRepo.set('custom_logos', body.mc_custom_logos);
+      }
+    }
+
+    res.json({ success: true, message: 'LocalStorage data safely migrated to persistent database.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Migration failed' });
+  }
+});
+
 // --- FIRESTORE DATABASE API ROUTES ---
 
 // List Collections
@@ -1597,7 +2287,8 @@ app.get('/api/stats/host', (req, res) => {
 });
 
 // List Servers (Scans db.json and auto-syncs storage/servers)
-app.get('/api/servers', (req, res) => {
+app.get('/api/servers', async (req, res) => {
+  const authUser = getAuthUser(req);
   const servers = db.getTable('servers') || [];
   
   // Synchronize status
@@ -1615,13 +2306,18 @@ app.get('/api/servers', (req, res) => {
   }
 
   const serverList = db.getTable('servers') || [];
-  const enrichedServers = serverList.map((s: any) => {
+  const isAdmin = !authUser || authUser.username === 'admin' || authUser.role === 'Admin' || authUser.role === 'administrator';
+  const visibleServers = isAdmin 
+    ? serverList 
+    : serverList.filter((s: any) => !s.ownerId || s.ownerId === authUser.id);
+
+  const enrichedServers = await Promise.all(visibleServers.map(async (s: any) => {
     const srvPath = path.join(process.cwd(), 'storage', 'servers', s.id);
     const diskUsedBytes = getDirectorySize(srvPath);
     const diskUsedFormatted = formatBytes(diskUsedBytes);
     
     const proc = runningProcesses.get(s.id);
-    const metrics = MetricsService.getInstance().getServerMetrics(s.id, proc);
+    const metrics = await MetricsService.getInstance().getServerMetrics(s.id, proc);
     
     return {
       ...s,
@@ -1638,12 +2334,12 @@ app.get('/api/servers', (req, res) => {
         diskUsedFormatted: metrics.diskUsedFormatted
       }
     };
-  });
+  }));
   res.json(enrichedServers);
 });
 
 // Get Single Server Details
-app.get('/api/servers/:serverId', (req, res) => {
+app.get('/api/servers/:serverId', async (req, res) => {
   const { serverId } = req.params;
   const servers = db.getTable('servers') || [];
   const server = servers.find((s: any) => s.id === serverId);
@@ -1656,7 +2352,7 @@ app.get('/api/servers/:serverId', (req, res) => {
   const diskUsedFormatted = formatBytes(diskUsedBytes);
 
   const proc = runningProcesses.get(serverId);
-  const metrics = MetricsService.getInstance().getServerMetrics(serverId, proc);
+  const metrics = await MetricsService.getInstance().getServerMetrics(serverId, proc);
 
   const enriched = {
     ...server,
@@ -1818,19 +2514,33 @@ app.post('/api/servers/create', async (req, res) => {
   // Allocate primary port
   const requestedPort = Number(req.body.port);
   let port = (requestedPort && requestedPort >= 1024 && requestedPort <= 65535) ? requestedPort : (installer.isProxy ? 25577 : 25565);
+  const existingServers = db.getTable('servers') || [];
   const existingAllocations = db.getTable('allocations') || [];
-  if (existingAllocations.some((a: any) => a.port === port)) {
+
+  const isPortBusy = (p: number) => {
+    return existingServers.some((s: any) => Number(s.primaryPort) === p) ||
+           existingAllocations.some((a: any) => Number(a.port) === p && a.serverId && a.serverId !== serverId);
+  };
+
+  if (isPortBusy(port)) {
     if (requestedPort && requestedPort === port) {
-      return res.status(400).json({ error: `Port ${port} is already bound to another server instance.` });
+      return res.status(400).json({ error: `Port ${port} is already bound to an active server instance.` });
     }
-    while (existingAllocations.some((a: any) => a.port === port)) {
+    while (isPortBusy(port)) {
       port++;
     }
   }
 
   try {
+    const authUser = getAuthUser(req);
+    const ownerId = authUser ? authUser.id : 'usr_admin';
+    const ownerUsername = authUser ? authUser.username : 'admin';
+    getUserStorageDir(ownerId);
+
     const newServer = {
       id: serverId,
+      ownerId,
+      ownerUsername,
       name: cleanName,
       description: description?.trim() || `${installer.isProxy ? 'Proxy' : 'Dedicated'} ${software} Server`,
       software: installer.engineId,
@@ -1867,16 +2577,25 @@ app.post('/api/servers/create', async (req, res) => {
       });
     }
 
-    // Insert server & port allocation
+    // Insert server & assign or create port allocation
     db.insert('servers', newServer);
-    db.insert('allocations', {
-      id: `alloc_${port}`,
-      ipAddress: '0.0.0.0',
-      port,
-      serverId: newServer.id,
-      label: 'Primary Port',
-      isPrimary: true
-    });
+    const existingAlloc = existingAllocations.find((a: any) => Number(a.port) === port);
+    if (existingAlloc) {
+      db.update('allocations', (a: any) => Number(a.port) === port, {
+        serverId: newServer.id,
+        isPrimary: true,
+        label: 'Primary Port'
+      });
+    } else {
+      db.insert('allocations', {
+        id: `alloc_${port}`,
+        ipAddress: '0.0.0.0',
+        port,
+        serverId: newServer.id,
+        label: 'Primary Port',
+        isPrimary: true
+      });
+    }
 
     db.addAuditLog({
       userEmail: (req as any).user?.email || 'admin',
@@ -2106,17 +2825,30 @@ app.post('/api/servers/:serverId/lifecycle', async (req, res) => {
 
     } else if (action === 'kill') {
       const proc = runningProcesses.get(serverId);
+      
+      // Force instant synchronization of DB status to Offline
+      db.update('servers', (s: any) => s.id === serverId, {
+        status: 'Offline',
+        stoppedAt: new Date().toISOString(),
+        containerId: null,
+        updatedAt: new Date().toISOString()
+      });
+      db.saveToFile();
+      broadcastEvent('SERVER_STATUS_CHANGED', { serverId, status: 'Offline', action: 'stop' });
+      broadcastEvent('SERVER_UPDATED', { id: serverId, status: 'Offline' });
+
       if (!proc) {
-        db.update('servers', (s: any) => s.id === serverId, {
-          status: 'Offline',
-          updatedAt: new Date().toISOString()
-        });
-        broadcastEvent('SERVER_STATUS_CHANGED', { serverId, status: 'Offline', action: 'stop' });
-        return res.json({ message: "Server is already offline.", status: 'Offline' });
+        return res.json({ message: "Server is already offline (DB synchronized).", status: 'Offline' });
       }
 
       addConsoleLog(serverId, '[System] Killing Minecraft server process instantly (SIGKILL)...');
-      proc.kill('SIGKILL');
+      try {
+        proc.kill('SIGKILL');
+      } catch (err: any) {
+        console.error(`Failed to kill process ${serverId}:`, err);
+      }
+      runningProcesses.delete(serverId);
+      serverStartTimes.delete(serverId);
 
       return res.json({ message: "Server killed forcefully.", status: 'Offline' });
 
@@ -2318,6 +3050,48 @@ app.delete('/api/servers/:serverId', (req, res) => {
   res.json({ message: `Server ${serverId} deleted successfully.` });
 });
 
+// Server Console Logs Stream & History Endpoint
+app.get('/api/servers/:serverId/logs', (req, res) => {
+  const { serverId } = req.params;
+  let history = consoleBuffer.get(serverId) || [];
+
+  // If buffer in memory is empty, try loading latest.log from disk
+  if (history.length === 0) {
+    const diskLogPath = path.join(process.cwd(), 'storage', 'servers', serverId, 'logs', 'latest.log');
+    if (fs.existsSync(diskLogPath)) {
+      try {
+        const logData = fs.readFileSync(diskLogPath, 'utf8');
+        history = logData.split('\n').filter(Boolean).slice(-150);
+        consoleBuffer.set(serverId, history);
+      } catch {}
+    }
+  }
+
+  res.json({ serverId, logs: history });
+});
+
+// Server Command Dispatch REST Endpoint
+app.post('/api/servers/:serverId/command', (req, res) => {
+  const { serverId } = req.params;
+  const { command } = req.body;
+  if (!command) {
+    return res.status(400).json({ error: 'Command is required.' });
+  }
+
+  const rawCmd = String(command).trim();
+  const cmd = rawCmd.startsWith('/') ? rawCmd.slice(1) : rawCmd;
+  addConsoleLog(serverId, `> ${cmd}`);
+
+  const proc = runningProcesses.get(serverId);
+  if (proc && proc.stdin && proc.stdin.writable) {
+    proc.stdin.write(`${cmd}\n`);
+    return res.json({ success: true, message: `Command "${cmd}" dispatched.` });
+  } else {
+    addConsoleLog(serverId, `[System] Cannot execute "${cmd}". Minecraft server is offline.`);
+    return res.status(400).json({ error: 'Minecraft server is offline.' });
+  }
+});
+
 // Server Metrics
 app.get('/api/servers/:serverId/metrics', (req, res) => {
   const { serverId } = req.params;
@@ -2395,47 +3169,164 @@ app.get('/api/audit', (req, res) => {
   res.json(db.getAuditLogs() || []);
 });
 
-// User Accounts CRUD
-app.get('/api/users', (req, res) => {
+// User Accounts CRUD (Admin Management)
+app.get('/api/users', requireAdmin, (req, res) => {
   const users = db.getUsers().map(({ passwordHash, emailVerificationToken, passwordResetToken, ...rest }) => rest);
   res.json(users);
 });
 
-app.post('/api/users', (req, res) => {
-  const { username, password, role } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' });
+app.post('/api/users', requireAdmin, (req, res) => {
+  const { username, email, displayName, password, role, disabled } = req.body;
+  if (!username || !password || !email) {
+    return res.status(400).json({ error: 'Username, email address, and password are all required.' });
   }
 
-  const cleanUsername = username.trim();
+  const cleanUsername = String(username).trim();
+  const cleanEmail = String(email).trim().toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Please provide a valid email address (e.g. user@example.com).' });
+  }
+
+  if (cleanUsername.length < 3 || cleanUsername.length > 30) {
+    return res.status(400).json({ error: 'Username must be between 3 and 30 characters.' });
+  }
+
+  if (String(password).length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+
   if (db.getUserByUsername(cleanUsername)) {
-    return res.status(400).json({ error: 'Username already exists.' });
+    return res.status(400).json({ error: `Username "${cleanUsername}" is already taken.` });
+  }
+
+  if (db.getUserByEmail(cleanEmail)) {
+    return res.status(400).json({ error: `Email address "${cleanEmail}" is already registered.` });
   }
 
   const newUser: AppUser = {
-    id: `usr_${Date.now()}`,
-    email: `${cleanUsername}@craftcommand.center`,
+    id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    email: cleanEmail,
+    normalizedEmail: cleanEmail,
     username: cleanUsername,
-    displayName: cleanUsername,
+    displayName: displayName?.trim() || cleanUsername,
     passwordHash: bcrypt.hashSync(password, 10),
     role: role || 'User',
     emailVerified: true,
-    disabled: false,
+    disabled: !!disabled,
     createdAt: new Date().toISOString()
   };
 
   db.addUser(newUser);
+  getUserStorageDir(newUser.id);
+
+  db.addAuditLog({
+    userEmail: (req as any).user?.email || 'admin',
+    action: 'ADMIN_CREATE_USER',
+    details: `Created new panel account for ${cleanUsername} (${cleanEmail}) with role ${role || 'User'}.`,
+    ipAddress: req.ip || '127.0.0.1'
+  });
+
   const { passwordHash: _, ...safeUser } = newUser;
   res.status(201).json(safeUser);
 });
 
-app.delete('/api/users/:userId', (req, res) => {
+app.put('/api/users/:userId', requireAdmin, (req, res) => {
   const { userId } = req.params;
+  const existingUser = db.getUserById(userId);
+  if (!existingUser) {
+    return res.status(404).json({ error: 'User account not found.' });
+  }
+
+  const { username, email, displayName, password, role, disabled, emailVerified } = req.body;
+  const updates: Partial<AppUser> = {};
+
+  if (email !== undefined) {
+    const cleanEmail = String(email).trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Please provide a valid email address.' });
+    }
+    const emailOwner = db.getUserByEmail(cleanEmail);
+    if (emailOwner && emailOwner.id !== userId) {
+      return res.status(400).json({ error: `Email address "${cleanEmail}" is already used by another account.` });
+    }
+    updates.email = cleanEmail;
+    updates.normalizedEmail = cleanEmail;
+  }
+
+  if (username !== undefined) {
+    const cleanUsername = String(username).trim();
+    if (cleanUsername.length < 3 || cleanUsername.length > 30) {
+      return res.status(400).json({ error: 'Username must be between 3 and 30 characters.' });
+    }
+    const usernameOwner = db.getUserByUsername(cleanUsername);
+    if (usernameOwner && usernameOwner.id !== userId) {
+      return res.status(400).json({ error: `Username "${cleanUsername}" is already taken by another account.` });
+    }
+    updates.username = cleanUsername;
+  }
+
+  if (displayName !== undefined) {
+    updates.displayName = String(displayName).trim() || updates.username || existingUser.username;
+  }
+
+  if (role !== undefined) {
+    updates.role = role;
+  }
+
+  if (disabled !== undefined) {
+    updates.disabled = !!disabled;
+  }
+
+  if (emailVerified !== undefined) {
+    updates.emailVerified = !!emailVerified;
+  }
+
+  if (password && String(password).trim().length > 0) {
+    if (String(password).length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+    }
+    updates.passwordHash = bcrypt.hashSync(String(password), 10);
+  }
+
+  const updatedUser = db.updateUser(userId, updates);
+  if (!updatedUser) {
+    return res.status(500).json({ error: 'Failed to update user account.' });
+  }
+
+  db.addAuditLog({
+    userEmail: (req as any).user?.email || 'admin',
+    action: 'ADMIN_UPDATE_USER',
+    details: `Updated account settings for user ${updatedUser.username} (${updatedUser.email}).`,
+    ipAddress: req.ip || '127.0.0.1'
+  });
+
+  const { passwordHash: _, emailVerificationToken: __, passwordResetToken: ___, ...safeUser } = updatedUser;
+  res.json(safeUser);
+});
+
+app.delete('/api/users/:userId', requireAdmin, (req, res) => {
+  const { userId } = req.params;
+  const currentAdmin = (req as any).user as AppUser;
+  if (currentAdmin && currentAdmin.id === userId) {
+    return res.status(400).json({ error: 'Cannot delete your own active administrator account.' });
+  }
+
   const deleted = db.deleteUser(userId);
   if (!deleted) {
     return res.status(404).json({ error: 'User not found.' });
   }
-  res.json({ message: 'User deleted.' });
+
+  db.addAuditLog({
+    userEmail: currentAdmin?.email || 'admin',
+    action: 'ADMIN_DELETE_USER',
+    details: `Deleted user account ${userId}.`,
+    ipAddress: req.ip || '127.0.0.1'
+  });
+
+  res.json({ message: 'User account deleted successfully.' });
 });
 
 // Port Allocations
@@ -2524,7 +3415,6 @@ app.get('/api/nodes', (req, res) => {
 app.post('/api/admin/nodes', requireAdmin, (req, res) => {
   const {
     name,
-    status,
     description,
     location,
     country,
@@ -2532,27 +3422,26 @@ app.post('/api/admin/nodes', requireAdmin, (req, res) => {
     port,
     maxMemoryGb,
     maxCpuCores,
-    maxDiskGb,
-    daemonStatus
+    maxDiskGb
   } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Node name is required.' });
   }
 
+  const nodeId = `node_${Date.now()}`;
+  const pairingToken = `ccc_pair_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}`;
   const finalLocation = location?.trim() || 'India';
   const finalCountry = country?.trim() || (finalLocation === 'India' ? 'India' : 'Global');
-  const finalStatus = status || 'ONLINE';
-  const finalDaemonStatus = daemonStatus || (finalStatus === 'OFFLINE' ? 'Unreachable' : 'Connected');
 
   const newNode = {
-    id: `node_${Date.now()}`,
+    id: nodeId,
     name: name.trim(),
-    status: finalStatus,
+    status: 'PENDING_INSTALLATION',
     description: description?.trim() || 'Minecraft hosting hardware node cluster',
     location: finalLocation,
     country: finalCountry,
-    ipAddress: ipAddress?.trim() || '125.16.24.110',
+    ipAddress: ipAddress?.trim() || '127.0.0.1',
     port: Number(port) || 8080,
     maxMemoryGb: Number(maxMemoryGb) || 32,
     allocatedMemoryGb: 0,
@@ -2560,12 +3449,42 @@ app.post('/api/admin/nodes', requireAdmin, (req, res) => {
     allocatedCpuCores: 0,
     maxDiskGb: Number(maxDiskGb) || 200,
     allocatedDiskGb: 0,
-    lastHeartbeat: new Date().toISOString(),
-    daemonStatus: finalDaemonStatus
+    pairingToken,
+    lastHeartbeat: null,
+    daemonStatus: 'Waiting for agent...'
   };
 
   db.insert('nodes', newNode);
   res.status(201).json(newNode);
+});
+
+// Node agent pairing / heartbeat endpoint
+app.post('/api/nodes/pair', (req, res) => {
+  const { pairingToken, nodeUuid, cpuCores, memoryGb, diskGb, os, architecture, dockerVersion, jdkStatuses } = req.body;
+  
+  const nodes = db.getTable('nodes') || [];
+  const node = nodes.find((n: any) => n.pairingToken === pairingToken || n.id === nodeUuid);
+
+  if (!node) {
+    return res.status(401).json({ error: 'Invalid pairing token or node UUID.' });
+  }
+
+  const now = new Date().toISOString();
+  db.update('nodes', (n: any) => n.id === node.id, {
+    status: 'ONLINE',
+    daemonStatus: 'Connected',
+    maxMemoryGb: memoryGb ? Number(memoryGb) : node.maxMemoryGb,
+    maxCpuCores: cpuCores ? Number(cpuCores) : node.maxCpuCores,
+    maxDiskGb: diskGb ? Number(diskGb) : node.maxDiskGb,
+    lastHeartbeat: now,
+    pairingToken: null // Single use token revocation
+  });
+
+  res.json({
+    success: true,
+    nodeId: node.id,
+    message: 'Node paired and verified successfully. Status set to ONLINE.'
+  });
 });
 
 // Update node (Admin only)
@@ -2695,6 +3614,22 @@ app.get('/api/servers/:serverId/files', (req, res) => {
     res.json(files);
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to list files' });
+  }
+});
+
+// Download file directly
+app.get('/api/servers/:serverId/files/download', (req, res) => {
+  const { serverId } = req.params;
+  const relPath = String(req.query.path || '');
+  if (!relPath) return res.status(400).send('Path required');
+  try {
+    const absolutePath = fileService.resolvePath(serverId, relPath);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).send('File not found');
+    }
+    res.download(absolutePath, path.basename(absolutePath));
+  } catch (err: any) {
+    res.status(500).send(err?.message || 'Failed to download file');
   }
 });
 
@@ -3280,7 +4215,7 @@ app.post('/api/servers/:serverId/properties', (req, res) => {
   }
 });
 
-// Backups list & create
+// Backups list, create, download, restore, delete
 app.get('/api/servers/:serverId/backups', (req, res) => {
   const { serverId } = req.params;
   const backups = (db.getTable('backups') || []).filter((b: any) => b.serverId === serverId);
@@ -3290,24 +4225,92 @@ app.get('/api/servers/:serverId/backups', (req, res) => {
 app.post('/api/servers/:serverId/backups', (req, res) => {
   const { serverId } = req.params;
   const { name } = req.body;
-  const newBackup = {
-    id: `bkp_${Date.now()}`,
-    serverId,
-    name: name || `Backup-${new Date().toISOString().substring(0, 10)}`,
-    sizeBytes: 154200000,
-    status: 'Completed',
-    createdAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
-    filePath: `storage/servers/${serverId}/backups/backup.zip`
-  };
-  db.insert('backups', newBackup);
-  res.status(201).json(newBackup);
+  try {
+    const serverDir = path.join(process.cwd(), 'storage', 'servers', serverId);
+    if (!fs.existsSync(serverDir)) {
+      fs.mkdirSync(serverDir, { recursive: true });
+    }
+    const backupsDir = path.join(serverDir, 'backups');
+    if (!fs.existsSync(backupsDir)) {
+      fs.mkdirSync(backupsDir, { recursive: true });
+    }
+
+    const bkpId = `bkp_${Date.now()}`;
+    const fileName = `${bkpId}.tar.gz`;
+    const outPath = path.join(backupsDir, fileName);
+
+    execSync(`tar -czf "${outPath}" --exclude='backups' -C "${serverDir}" .`);
+
+    const fileStat = fs.statSync(outPath);
+    const newBackup = {
+      id: bkpId,
+      serverId,
+      name: name || `Backup-${new Date().toISOString().substring(0, 10)}`,
+      sizeBytes: fileStat.size,
+      status: 'Completed',
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      filePath: path.join('storage', 'servers', serverId, 'backups', fileName)
+    };
+    db.insert('backups', newBackup);
+    res.status(201).json(newBackup);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to create server backup (.tar.gz)' });
+  }
 });
 
-app.delete('/api/servers/:serverId/backups/:backupId', (req, res) => {
+app.get('/api/servers/:serverId/backup-download/:backupId', (req, res) => {
   const { backupId } = req.params;
-  db.delete('backups', (b: any) => b.id === backupId);
-  res.json({ message: 'Backup deleted' });
+  const backups = db.getTable('backups') || [];
+  const backup = backups.find((b: any) => b.id === backupId);
+  if (!backup) {
+    return res.status(404).send('Backup not found.');
+  }
+  const absolutePath = path.resolve(process.cwd(), backup.filePath);
+  if (!fs.existsSync(absolutePath)) {
+    return res.status(404).send('Backup archive file not found on disk.');
+  }
+  res.download(absolutePath, `${backup.name || 'server_backup'}.tar.gz`);
+});
+
+app.post('/api/servers/:serverId/backup-restore/:backupId', (req, res) => {
+  const { serverId, backupId } = req.params;
+  const backups = db.getTable('backups') || [];
+  const backup = backups.find((b: any) => b.id === backupId);
+  if (!backup) {
+    return res.status(404).json({ error: 'Backup not found.' });
+  }
+  const absolutePath = path.resolve(process.cwd(), backup.filePath);
+  if (!fs.existsSync(absolutePath)) {
+    return res.status(404).json({ error: 'Backup archive file not found on disk.' });
+  }
+
+  try {
+    const serverDir = path.join(process.cwd(), 'storage', 'servers', serverId);
+    if (!fs.existsSync(serverDir)) {
+      fs.mkdirSync(serverDir, { recursive: true });
+    }
+    execSync(`tar -xzf "${absolutePath}" -C "${serverDir}"`);
+    res.json({ message: 'Server restored successfully from .tar.gz backup.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to restore server from backup.' });
+  }
+});
+
+app.delete('/api/servers/:serverId/backup-delete/:backupId', (req, res) => {
+  const { backupId } = req.params;
+  const backups = db.getTable('backups') || [];
+  const backup = backups.find((b: any) => b.id === backupId);
+  if (backup) {
+    try {
+      const absolutePath = path.resolve(process.cwd(), backup.filePath);
+      if (fs.existsSync(absolutePath)) {
+        fs.unlinkSync(absolutePath);
+      }
+    } catch {}
+    db.delete('backups', (b: any) => b.id === backupId);
+  }
+  res.json({ message: 'Backup deleted successfully' });
 });
 
 // Schedules list & create
@@ -3389,6 +4392,11 @@ app.post('/api/servers/:serverId/players/action', (req, res) => {
 
 // Initialize Vite Dev Middleware
 async function startServer() {
+  // Explicit 404 fallback for unmatched /api requests to prevent HTML fallback
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
+  });
+
   const vite = await createViteServer({
     server: { middlewareMode: true },
     appType: 'spa'

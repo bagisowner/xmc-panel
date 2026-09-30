@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, Download, Trash2, Check, RefreshCw,
   FolderOpen, Shield, Globe, Zap, FileCode, AlertCircle,
-  ExternalLink, Sparkles, Box, CheckCircle2, ChevronRight,
+  ExternalLink, Boxes, Box, CheckCircle2, ChevronRight,
   ToggleLeft, ToggleRight, Upload, X, ArrowLeft, ArrowRight
 } from 'lucide-react';
 
@@ -384,7 +384,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-              <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" />
+              <Boxes className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" />
               {software} Plugins
             </h2>
             <p className="text-xs sm:text-sm text-zinc-300 max-w-2xl mt-1">
@@ -546,7 +546,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
                         />
                       ) : (
                         <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-lg sm:rounded-xl bg-gradient-to-br from-purple-600/30 to-indigo-600/30 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
-                          <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
+                          <Boxes className="w-4 h-4 sm:w-5 sm:h-5" />
                         </div>
                       )}
 
@@ -728,7 +728,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shrink-0">
-                      <Sparkles className="w-5 h-5" />
+                      <Boxes className="w-5 h-5" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">

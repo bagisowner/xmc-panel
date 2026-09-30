@@ -19,7 +19,7 @@ export class PortService {
    * Seed some base allocations in the database if empty
    */
   public async seedDefaultAllocations() {
-    const existing = this.db.getTable('allocations');
+    const existing = await this.db.getTable('allocations');
     if (existing.length === 0) {
       // Seed default allocations
       const defaults = [25565, 25566, 25567, 25575, 8123, 19132];
@@ -51,7 +51,7 @@ export class PortService {
    * Finds the next available port on the host system starting from 25565
    */
   public async findAvailablePort(startPort = 25565, endPort = 30000): Promise<number> {
-    const allocations = this.db.getTable('allocations');
+    const allocations = await this.db.getTable('allocations');
     for (let port = startPort; port <= endPort; port++) {
       // 1. Check database allocation
       const isAllocatedInDb = allocations.some(a => a.port === port && a.serverId !== null);
@@ -69,8 +69,9 @@ export class PortService {
   /**
    * Retrieve allocations for a server
    */
-  public getServerPorts(serverId: string): Allocation[] {
-    return this.db.getTable('allocations').filter(a => a.serverId === serverId);
+  public async getServerPorts(serverId: string): Promise<Allocation[]> {
+    const allocations = await this.db.getTable('allocations');
+    return allocations.filter(a => a.serverId === serverId);
   }
 
   /**
@@ -78,7 +79,7 @@ export class PortService {
    */
   public async allocatePort(serverId: string, port: number, label: string, isPrimary = false): Promise<Allocation> {
     // Check conflicts
-    const allocations = this.db.getTable('allocations');
+    const allocations = await this.db.getTable('allocations');
     const existing = allocations.find(a => a.port === port);
 
     if (existing && existing.serverId) {
@@ -109,7 +110,8 @@ export class PortService {
       });
     }
 
-    return this.db.getTable('allocations').find(a => a.id === allocationId)!;
+    const finalAllocations = await this.db.getTable('allocations');
+    return finalAllocations.find(a => a.id === allocationId)!;
   }
 
   /**

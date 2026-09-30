@@ -65,6 +65,7 @@ export class JavaService {
   private db = Database.getInstance();
   private installingVersions: Set<string> = new Set();
   private progressStatusMap: Map<string, JavaProgressStatus> = new Map();
+  private activeInstallPromises: Map<string, Promise<any>> = new Map();
 
   private constructor() {
     this.runtimeDir = process.env.JAVA_RUNTIME_DIR || path.resolve(process.cwd(), 'runtimes', 'java');
@@ -289,7 +290,7 @@ export class JavaService {
             verification
           };
 
-          const dbRuntimes = this.db.getTable('javaRuntimes') || [];
+          const dbRuntimes = await this.db.getTable('javaRuntimes') || [];
           const existing = dbRuntimes.find(r => r.version === ver);
           if (existing) {
             await this.db.update('javaRuntimes', r => r.version === ver, r => {
@@ -330,7 +331,7 @@ export class JavaService {
       }
     ];
 
-    const dbRuntimes = this.db.getTable('javaRuntimes') || [];
+    const dbRuntimes = await this.db.getTable('javaRuntimes') || [];
     const runtimesList: JavaRuntimeInfo[] = [];
 
     for (const v of knownVersions) {
@@ -434,8 +435,9 @@ export class JavaService {
       throw new Error(`Invalid Java version ${version}. Supported versions: 17, 21, 25.`);
     }
 
-    if (this.installingVersions.has(cleanVer)) {
-      throw new Error(`Java ${cleanVer} installation is already in progress.`);
+    if (this.activeInstallPromises.has(cleanVer)) {
+      console.log(`[JavaService] Java ${cleanVer} installation is already in progress. Awaiting existing task...`);
+      return await this.activeInstallPromises.get(cleanVer)!;
     }
 
     const binPath = path.join(this.runtimeDir, cleanVer, 'bin', 'java');
@@ -455,220 +457,226 @@ export class JavaService {
       }
     }
 
-    this.installingVersions.add(cleanVer);
-    console.log(`[JavaService] Initiating Pure TypeScript OpenJDK installer for Java ${cleanVer}...`);
+    const installPromise = (async () => {
+      this.installingVersions.add(cleanVer);
+      console.log(`[JavaService] Initiating Pure TypeScript OpenJDK installer for Java ${cleanVer}...`);
 
-    this.updateStatus(cleanVer, {
-      status: 'resolving',
-      percent: 5,
-      phase: `Resolving official OpenJDK ${cleanVer} release binaries for ${process.platform}/${process.arch}...`
-    });
+      this.updateStatus(cleanVer, {
+        status: 'resolving',
+        percent: 5,
+        phase: `Resolving official OpenJDK ${cleanVer} release binaries for ${process.platform}/${process.arch}...`
+      });
 
-    try {
-      // Direct mirrors with fallback
-      const downloadUrls: Record<string, string[]> = {
-        '17': [
-          'https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse',
-          'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.12%2B7/OpenJDK17U-jdk_x64_linux_hotspot_17.0.12_7.tar.gz'
-        ],
-        '21': [
-          'https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse',
-          'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.4%2B7/OpenJDK21U-jdk_x64_linux_hotspot_21.0.4_7.tar.gz'
-        ],
-        '25': [
-          'https://api.adoptium.net/v3/binary/latest/25/ea/linux/x64/jdk/hotspot/normal/eclipse',
-          'https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25%2B10-ea/OpenJDK25U-jdk_x64_linux_hotspot_25_10-ea.tar.gz'
-        ]
-      };
+      try {
+        // Direct mirrors with fallback
+        const downloadUrls: Record<string, string[]> = {
+          '17': [
+            'https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse',
+            'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.12%2B7/OpenJDK17U-jdk_x64_linux_hotspot_17.0.12_7.tar.gz'
+          ],
+          '21': [
+            'https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse',
+            'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.4%2B7/OpenJDK21U-jdk_x64_linux_hotspot_21.0.4_7.tar.gz'
+          ],
+          '25': [
+            'https://api.adoptium.net/v3/binary/latest/25/ea/linux/x64/jdk/hotspot/normal/eclipse',
+            'https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25%2B10-ea/OpenJDK25U-jdk_x64_linux_hotspot_25_10-ea.tar.gz'
+          ]
+        };
 
-      const urls = downloadUrls[cleanVer] || downloadUrls['21'];
-      let lastErr: Error | null = null;
-      const tempTarPath = path.join(this.runtimeDir, `.tmp_jdk_${cleanVer}_${Date.now()}.tar.gz`);
+        const urls = downloadUrls[cleanVer] || downloadUrls['21'];
+        let lastErr: Error | null = null;
+        const tempTarPath = path.join(this.runtimeDir, `.tmp_jdk_${cleanVer}_${Date.now()}.tar.gz`);
 
-      for (const dlUrl of urls) {
-        try {
-          console.log(`[JavaService] Downloading OpenJDK ${cleanVer} from: ${dlUrl}`);
-          
-          this.updateStatus(cleanVer, {
-            status: 'downloading',
-            percent: 15,
-            phase: `Downloading OpenJDK ${cleanVer} archive from official repository...`
-          });
+        for (const dlUrl of urls) {
+          try {
+            console.log(`[JavaService] Downloading OpenJDK ${cleanVer} from: ${dlUrl}`);
+            
+            this.updateStatus(cleanVer, {
+              status: 'downloading',
+              percent: 15,
+              phase: `Downloading OpenJDK ${cleanVer} archive from official repository...`
+            });
 
-          const res = await fetch(dlUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (X11; Linux x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-              'Accept': '*/*'
-            }
-          });
-
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-          }
-
-          const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
-          
-          if (res.body) {
-            const reader = res.body.getReader();
-            const fileStream = fs.createWriteStream(tempTarPath);
-            let downloadedBytes = 0;
-            const startTime = Date.now();
-
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              if (value) {
-                downloadedBytes += value.length;
-                fileStream.write(Buffer.from(value));
-
-                const elapsedSec = (Date.now() - startTime) / 1000;
-                const speed = elapsedSec > 0 ? downloadedBytes / elapsedSec : 0;
-                const percent = totalBytes > 0 ? Math.min(Math.round((downloadedBytes / totalBytes) * 75) + 15, 88) : 50;
-
-                this.updateStatus(cleanVer, {
-                  status: 'downloading',
-                  downloadedBytes,
-                  totalBytes,
-                  downloadedFormatted: this.formatBytes(downloadedBytes),
-                  totalFormatted: this.formatBytes(totalBytes),
-                  percent,
-                  speedBytesPerSec: Math.round(speed),
-                  speedFormatted: `${this.formatBytes(speed)}/s`,
-                  phase: `Downloading OpenJDK ${cleanVer} (${this.formatBytes(downloadedBytes)} / ${this.formatBytes(totalBytes)})...`
-                });
+            const res = await fetch(dlUrl, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': '*/*'
               }
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
             }
-            fileStream.end();
-            await new Promise(resolve => setTimeout(resolve, 300));
-          } else {
-            const arrayBuffer = await res.arrayBuffer();
-            fs.writeFileSync(tempTarPath, Buffer.from(arrayBuffer));
+
+            const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
+            
+            if (res.body) {
+              const reader = res.body.getReader();
+              const fileStream = fs.createWriteStream(tempTarPath);
+              let downloadedBytes = 0;
+              const startTime = Date.now();
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (value) {
+                  downloadedBytes += value.length;
+                  fileStream.write(Buffer.from(value));
+
+                  const elapsedSec = (Date.now() - startTime) / 1000;
+                  const speed = elapsedSec > 0 ? downloadedBytes / elapsedSec : 0;
+                  const percent = totalBytes > 0 ? Math.min(Math.round((downloadedBytes / totalBytes) * 75) + 15, 88) : 50;
+
+                  this.updateStatus(cleanVer, {
+                    status: 'downloading',
+                    downloadedBytes,
+                    totalBytes,
+                    downloadedFormatted: this.formatBytes(downloadedBytes),
+                    totalFormatted: this.formatBytes(totalBytes),
+                    percent,
+                    speedBytesPerSec: Math.round(speed),
+                    speedFormatted: `${this.formatBytes(speed)}/s`,
+                    phase: `Downloading OpenJDK ${cleanVer} (${this.formatBytes(downloadedBytes)} / ${this.formatBytes(totalBytes)})...`
+                  });
+                }
+              }
+              fileStream.end();
+              await new Promise(resolve => setTimeout(resolve, 300));
+            } else {
+              const arrayBuffer = await res.arrayBuffer();
+              fs.writeFileSync(tempTarPath, Buffer.from(arrayBuffer));
+            }
+
+            lastErr = null;
+            break; // Successfully downloaded
+          } catch (err: any) {
+            console.warn(`[JavaService] Download attempt from ${dlUrl} failed: ${err.message}. Retrying fallback mirror...`);
+            lastErr = err;
           }
-
-          lastErr = null;
-          break; // Successfully downloaded
-        } catch (err: any) {
-          console.warn(`[JavaService] Download attempt from ${dlUrl} failed: ${err.message}. Retrying fallback mirror...`);
-          lastErr = err;
         }
-      }
 
-      if (lastErr || !fs.existsSync(tempTarPath)) {
-        throw new Error(lastErr?.message || `Failed to download Java ${cleanVer} from all mirrors.`);
-      }
-
-      // Extraction Phase
-      this.updateStatus(cleanVer, {
-        status: 'extracting',
-        percent: 90,
-        phase: `Extracting OpenJDK ${cleanVer} files...`
-      });
-
-      const tempExtractDir = path.join(this.runtimeDir, `.tmp_extract_${cleanVer}_${Date.now()}`);
-      fs.mkdirSync(tempExtractDir, { recursive: true });
-
-      await execFileAsync('tar', ['-xzf', tempTarPath, '-C', tempExtractDir]);
-
-      // Find extracted root directory
-      const subdirs = fs.readdirSync(tempExtractDir);
-      let extractedRoot = tempExtractDir;
-      for (const dir of subdirs) {
-        const fullSub = path.join(tempExtractDir, dir);
-        if (fs.statSync(fullSub).isDirectory() && fs.existsSync(path.join(fullSub, 'bin', 'java'))) {
-          extractedRoot = fullSub;
-          break;
+        if (lastErr || !fs.existsSync(tempTarPath)) {
+          throw new Error(lastErr?.message || `Failed to download Java ${cleanVer} from all mirrors.`);
         }
-      }
 
-      // If target directory already exists, replace cleanly
-      if (fs.existsSync(targetDir)) {
-        fs.rmSync(targetDir, { recursive: true, force: true });
-      }
-
-      fs.renameSync(extractedRoot, targetDir);
-
-      // Clean up temp items
-      try { fs.rmSync(tempExtractDir, { recursive: true, force: true }); } catch {}
-      try { fs.unlinkSync(tempTarPath); } catch {}
-
-      // Set permissions
-      if (fs.existsSync(binPath)) {
-        fs.chmodSync(binPath, 0o755);
-      }
-
-      // Verification Phase
-      this.updateStatus(cleanVer, {
-        status: 'verifying',
-        percent: 97,
-        phase: `Verifying OpenJDK ${cleanVer} binary execution (java -version)...`
-      });
-
-      const verification = await this.verifyRuntimeBinary(binPath);
-      if (!verification.valid) {
-        throw new Error(`Verification of installed Java ${cleanVer} binary failed: ${verification.error || 'Invalid binary'}`);
-      }
-
-      // Record in Database
-      const sizeBytes = this.getFolderSize(targetDir);
-      const runtimeRecord: JavaRuntimeRecord = {
-        id: `java_${cleanVer}`,
-        name: `Adoptium OpenJDK ${cleanVer}`,
-        version: cleanVer as any,
-        major: parseInt(cleanVer, 10),
-        vendor: cleanVer === '25' ? 'Azul Zulu / Adoptium OpenJDK 25' : 'Eclipse Adoptium Temurin',
-        path: binPath,
-        directory: targetDir,
-        status: 'Installed',
-        installedAt: new Date().toISOString(),
-        sizeBytes,
-        sizeFormatted: this.formatBytes(sizeBytes),
-        verification
-      };
-
-      const dbRuntimes = this.db.getTable('javaRuntimes') || [];
-      const existing = dbRuntimes.find(r => r.version === cleanVer);
-      if (existing) {
-        await this.db.update('javaRuntimes', r => r.version === cleanVer, r => {
-          Object.assign(r, runtimeRecord);
+        // Extraction Phase
+        this.updateStatus(cleanVer, {
+          status: 'extracting',
+          percent: 90,
+          phase: `Extracting OpenJDK ${cleanVer} files...`
         });
-      } else {
-        await this.db.insert('javaRuntimes', runtimeRecord);
+
+        const tempExtractDir = path.join(this.runtimeDir, `.tmp_extract_${cleanVer}_${Date.now()}`);
+        fs.mkdirSync(tempExtractDir, { recursive: true });
+
+        await execFileAsync('tar', ['-xzf', tempTarPath, '-C', tempExtractDir]);
+
+        // Find extracted root directory
+        const subdirs = fs.readdirSync(tempExtractDir);
+        let extractedRoot = tempExtractDir;
+        for (const dir of subdirs) {
+          const fullSub = path.join(tempExtractDir, dir);
+          if (fs.statSync(fullSub).isDirectory() && fs.existsSync(path.join(fullSub, 'bin', 'java'))) {
+            extractedRoot = fullSub;
+            break;
+          }
+        }
+
+        // If target directory already exists, replace cleanly
+        if (fs.existsSync(targetDir)) {
+          fs.rmSync(targetDir, { recursive: true, force: true });
+        }
+
+        fs.renameSync(extractedRoot, targetDir);
+
+        // Clean up temp items
+        try { fs.rmSync(tempExtractDir, { recursive: true, force: true }); } catch {}
+        try { fs.unlinkSync(tempTarPath); } catch {}
+
+        // Set permissions
+        if (fs.existsSync(binPath)) {
+          fs.chmodSync(binPath, 0o755);
+        }
+
+        // Verification Phase
+        this.updateStatus(cleanVer, {
+          status: 'verifying',
+          percent: 97,
+          phase: `Verifying OpenJDK ${cleanVer} binary execution (java -version)...`
+        });
+
+        const verification = await this.verifyRuntimeBinary(binPath);
+        if (!verification.valid) {
+          throw new Error(`Verification of installed Java ${cleanVer} binary failed: ${verification.error || 'Invalid binary'}`);
+        }
+
+        // Record in Database
+        const sizeBytes = this.getFolderSize(targetDir);
+        const runtimeRecord: JavaRuntimeRecord = {
+          id: `java_${cleanVer}`,
+          name: `Adoptium OpenJDK ${cleanVer}`,
+          version: cleanVer as any,
+          major: parseInt(cleanVer, 10),
+          vendor: cleanVer === '25' ? 'Azul Zulu / Adoptium OpenJDK 25' : 'Eclipse Adoptium Temurin',
+          path: binPath,
+          directory: targetDir,
+          status: 'Installed',
+          installedAt: new Date().toISOString(),
+          sizeBytes,
+          sizeFormatted: this.formatBytes(sizeBytes),
+          verification
+        };
+
+        const dbRuntimes = await this.db.getTable('javaRuntimes') || [];
+        const existing = dbRuntimes.find(r => r.version === cleanVer);
+        if (existing) {
+          await this.db.update('javaRuntimes', r => r.version === cleanVer, r => {
+            Object.assign(r, runtimeRecord);
+          });
+        } else {
+          await this.db.insert('javaRuntimes', runtimeRecord);
+        }
+
+        const completedStatus: JavaProgressStatus = {
+          status: 'completed',
+          percent: 100,
+          phase: `Installed & Verified ✓ (${verification.versionString || `Java ${cleanVer}`})`,
+          path: binPath,
+          verification
+        };
+
+        this.updateStatus(cleanVer, completedStatus);
+
+        console.log(`[JavaService] OpenJDK ${cleanVer} successfully installed and saved to database.`);
+
+        return {
+          success: true,
+          version: cleanVer,
+          path: binPath,
+          verification,
+          message: `OpenJDK ${cleanVer} successfully installed and verified.`
+        };
+
+      } catch (err: any) {
+        console.error(`[JavaService] OpenJDK ${cleanVer} installation failed:`, err);
+        const failedStatus: JavaProgressStatus = {
+          status: 'failed',
+          percent: 0,
+          phase: 'Installation Failed',
+          error: err.message || 'Unknown installation error'
+        };
+        this.updateStatus(cleanVer, failedStatus);
+        throw err;
+
+      } finally {
+        this.installingVersions.delete(cleanVer);
+        this.activeInstallPromises.delete(cleanVer);
       }
+    })();
 
-      const completedStatus: JavaProgressStatus = {
-        status: 'completed',
-        percent: 100,
-        phase: `Installed & Verified ✓ (${verification.versionString || `Java ${cleanVer}`})`,
-        path: binPath,
-        verification
-      };
-
-      this.updateStatus(cleanVer, completedStatus);
-
-      console.log(`[JavaService] OpenJDK ${cleanVer} successfully installed and saved to database.`);
-
-      return {
-        success: true,
-        version: cleanVer,
-        path: binPath,
-        verification,
-        message: `OpenJDK ${cleanVer} successfully installed and verified.`
-      };
-
-    } catch (err: any) {
-      console.error(`[JavaService] OpenJDK ${cleanVer} installation failed:`, err);
-      const failedStatus: JavaProgressStatus = {
-        status: 'failed',
-        percent: 0,
-        phase: 'Installation Failed',
-        error: err.message || 'Unknown installation error'
-      };
-      this.updateStatus(cleanVer, failedStatus);
-      throw err;
-
-    } finally {
-      this.installingVersions.delete(cleanVer);
-    }
+    this.activeInstallPromises.set(cleanVer, installPromise);
+    return await installPromise;
   }
 
   /**
@@ -705,7 +713,11 @@ export class JavaService {
     }
 
     console.log(`[JavaService] Java ${cleanVer} binary missing at ${expectedBin}. Triggering pure TypeScript OpenJDK download...`);
-    await this.installRuntime(cleanVer, false);
+    try {
+      await this.installRuntime(cleanVer, false);
+    } catch (err: any) {
+      console.warn(`[JavaService] installRuntime for Java ${cleanVer} completed or encountered: ${err.message}`);
+    }
 
     if (fs.existsSync(expectedBin)) {
       fs.chmodSync(expectedBin, 0o755);

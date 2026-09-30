@@ -211,8 +211,9 @@ export class MetricsService {
    * Calculate exact real-time metrics for a specific server instance
    * 100% = 1 core utilized. 800% = 8 cores utilized.
    */
-  public getServerMetrics(serverId: string, childProcess: any): RealtimeServerMetrics {
-    const server = this.db.getTable('servers').find(s => s.id === serverId);
+  public async getServerMetrics(serverId: string, childProcess: any): Promise<RealtimeServerMetrics> {
+    const servers = await this.db.getTable('servers');
+    const server = servers.find(s => s.id === serverId);
     const status = server ? server.status : (childProcess && !childProcess.killed ? 'Running' : 'Offline');
     const isRunning = status === 'Running' && childProcess && !childProcess.killed;
     const isStarting = status === 'Starting';
